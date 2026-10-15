@@ -1,0 +1,19 @@
+# prostředí a závislosti
+.venv/
+node_modules/
+profil-prohlizece/
+__pycache__/
+
+# osobní data – stav, konverzace, logy, fronta, screenshoty z FB
+state*.json
+fronta.json
+log.csv
+errors.log
+*.log
+posty/screeny/
+konverzace*.json
+
+# klíče
+.env
+*.key
+.gemini_key

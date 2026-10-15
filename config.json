@@ -1,0 +1,36 @@
+{
+  "model": "opus",
+  "effort": "medium",
+  "claudePath": "/Users/TheodorHajek/.local/bin/claude",
+  "browser": "chrome",
+  "replyDelaySeconds": [
+    20,
+    60
+  ],
+  "recentConversationsToWatch": 15,
+  "maxBotRepliesInRow": 6,
+  "pauseAfterManualReplyHours": 12,
+  "messagesUrl": "https://www.facebook.com/messages/t/",
+  "notificationCheckSeconds": 20,
+  "fullCheckEveryMinutes": [
+    20,
+    40
+  ],
+  "requestsEveryMinutes": [
+    60,
+    90
+  ],
+  "quietHours": [
+    23,
+    7
+  ],
+  "commentsEveryMinutes": [
+    30,
+    60
+  ],
+  "maxPostsPerDay": 4,
+  "postGapMinutes": [
+    20,
+    40
+  ]
+}
