@@ -576,8 +576,12 @@ def check_comments():
     fb.open_notifications()
     for notif in [n for n in fb.all_comment_notifications() if n["key"] not in seen]:
         fb.open_notification(notif["key"])
-        comments = [c for c in fb.read_post_comments()
-                    if c["name"] != fb.ME and not c["answered"] and c["indent"] == notif["reply"]
+        all_comments = fb.read_post_comments()
+        if not all_comments:  # nic nenačteno – radši zkusit příště, než to označit jako vyřízené
+            log(notif["group"] or "komentáře", "pod příspěvkem jsem nic nenačetl, zkusím příště", notif["key"])
+            continue
+        comments = [c for c in all_comments
+                    if c["name"] != fb.ME and not c["answered"] and not fb.too_old(c.get("age")) and c["indent"] == notif["reply"]
                     and f"{c['name']}|{c['text'][:80]}" not in done]
         merged = {}  # víc komentářů od jednoho člověka = jedna odpověď a jedna zpráva
         for c in comments:
@@ -593,10 +597,7 @@ def check_comments():
             try:
                 answer = ask_claude_comment(item)
                 reply, dm = answer["comment_reply"].strip(), answer["dm"].strip()
-                if SEND:
-                    for k in [ckey] + c.get("also", []):
-                        done[k] = answer.get("note", "")
-                    save_state()
+                mark = lambda: [done.__setitem__(k, answer.get("note", "")) for k in [ckey] + c.get("also", [])] and save_state()
                 if not SEND:
                     log(name, "KOMENTÁŘ – NÁVRH (neodesláno)", f"„{c['text']}“ → {reply or '—'} | DM: {dm if answer['send_dm'] else '—'}")
                     continue
@@ -604,31 +605,53 @@ def check_comments():
                 if answer["send_dm"] and dm and not t.get("dmFromComment") and not t.get("blocked") and not t.get("handled"):
                     dms.append((c, dm))
                 if not reply:
+                    mark()
                     log(name, "komentář bez veřejné odpovědi", f"„{c['text']}“ – {answer.get('note', '')}")
                     continue
                 fb.open_notification(notif["key"])  # příspěvek znovu odshora, ať se komentář najde
                 fb.reply_to_comment(name, c["first"], reply)
+                mark()  # vyřízeno až po odeslání – při chybě to bot zkusí příště znovu
                 log(name, "komentář – odpověděl jsem", f"„{c['text']}“ → {reply}")
                 time.sleep(random.uniform(10, 30))
             except Exception as e:  # noqa: BLE001
                 comment_error(name, c["text"], e)
-        for c, dm in dms:
-            name = c["name"]
-            try:
-                time.sleep(random.uniform(20, 60))
-                fb.open_notification(notif["key"])
-                fb.message_commenter(name, c["first"], dm)
-                t = thread(name)
-                t["botSent"] = (t["botSent"] + [dm])[-20:]
-                t["botReplies"] += 1
-                t["dmFromComment"] = True
-                log(name, "komentář – poslal jsem zprávu", dm)
-                save_state()
-            except Exception as e:  # noqa: BLE001
-                comment_error(name, c["text"], e)
+        retry = state.setdefault("dmRetry", [])
+        retry += [{"key": notif["key"], "name": c["name"], "first": c["first"], "dm": dm, "tries": 0} for c, dm in dms]
         if SEND:
             seen[notif["key"]] = datetime.now().strftime("%d. %m. %H:%M")
             save_state()
+    send_comment_dms(fb)
+
+
+def send_comment_dms(fb):
+    """Zprávy do Messengeru lidem z komentářů (i ty, které minule selhaly – nejvýš 3 pokusy)."""
+    retry = state.setdefault("dmRetry", [])
+    for job in list(retry):
+        name = job["name"]
+        t = thread(name)
+        if t.get("dmFromComment") or t.get("blocked"):
+            retry.remove(job)
+            continue
+        try:
+            time.sleep(random.uniform(20, 60))
+            fb.open_notification(job["key"])
+            result = fb.message_commenter(name, job["first"], job["dm"])
+            t["dmFromComment"] = True
+            retry.remove(job)
+            if result == "existing":
+                log(name, "komentář – s člověkem už máme chat, zprávu neposílám")
+            else:
+                t["botSent"] = (t["botSent"] + [job["dm"]])[-20:]
+                t["botReplies"] += 1
+                log(name, "komentář – poslal jsem zprávu", job["dm"])
+        except Exception as e:  # noqa: BLE001
+            job["tries"] += 1
+            if job["tries"] >= 3:
+                retry.remove(job)
+                comment_error(name, job["first"], e)
+            else:
+                log(name, f"zpráva z komentáře nevyšla ({job['tries']}×), zkusím příště", str(e))
+        save_state()
 
 
 def comment_error(name, text, e):

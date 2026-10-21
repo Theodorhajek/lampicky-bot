@@ -65,10 +65,12 @@ def discard_composer():
 def home():
     """Facebook nastartovaný načisto, hlavní stránka."""
     d.app_start(FB, stop=True)
-    time.sleep(8)
     for _ in range(5):
-        if d(description="Hledat").exists:
+        if d(description="Hledat").wait(timeout=20):  # Facebook se někdy načítá pomalu
             return
+        if d.app_current().get("package") != FB:  # „zpět“ nás vyhodilo z aplikace – znovu otevřít
+            d.app_start(FB)
+            continue
         if discard_composer():
             continue
         d.press("back")
@@ -278,7 +280,7 @@ ME = "Martin Hejduk"
 # „Jaroslav Strakoš s 5 dalšími okomentovali váš příspěvek ve skupině …“, „X odpověděl(a) na váš komentář …: „text““
 COMMENT_RE = re.compile(r"^(?P<name>.+?) (?:s \d+ dalšími |a \d+ dalších )?(?P<kind>okomentoval\w*(?:\(a\))?|odpověděl\w*(?:\(a\))?)"
                         r" (?:na )?(?P<what>váš|vaši|vás|vaše)\b.*?(?:ve skupině (?P<group>.+?))?(?:[.:]|$)")
-TIME_TAIL = re.compile(r"\.*\s*\d+\s*(?:s|m|h|d|t|r)\.?(?:\s*Nepřečteno)?\s*$|\s*Nepřečteno\s*$")
+TIME_TAIL = re.compile(r"\.*\s*\d+\s*(?:s|m|h|d|t|r)\.?(?:\s*(?:Nep|P)řečteno)?\s*$|\s*(?:Nep|P)řečteno\s*$")
 
 
 def open_notifications():
@@ -333,35 +335,58 @@ def open_notification(key):
     open_notifications()
     for _ in range(14):
         match = next((i for i in comment_notifications() if i["key"] == key), None)
-        if match:
+        if match and 250 < match["bounds"][1] and match["bounds"][3] < 2050:  # celé vidět (ne pod spodní lištou)
             x1, y1, x2, y2 = match["bounds"]
             d.click((x1 + x2) // 2, (y1 + y2) // 2)
-            time.sleep(8)
+            if not (d(descriptionStartsWith="Příspěvek od").wait(timeout=20) or d(description="Komentář").exists):
+                raise RuntimeError("po klepnutí na upozornění se neotevřel příspěvek")
+            time.sleep(3)
             return
+        if match:
+            d.swipe(540, 1500, 540, 1000, 0.3)  # upozornění je u kraje – kousek posunout
+            time.sleep(2)
+            continue
         _more_notifications()
         d.swipe(540, 1800, 540, 800, 0.3)
         time.sleep(2)
     raise RuntimeError("upozornění na komentář jsem nenašel")
 
 
+def too_old(age):
+    """Komentář starší než týden (nebo neznámé stáří) – na ten už bot nereaguje."""
+    m = re.match(r"(\d+)\s*(\w+)", age or "")
+    if not m:
+        return False  # stáří nezjištěno – rozhodne „answered“
+    n, unit = int(m.group(1)), m.group(2)
+    return unit in ("T", "t", "r") or (unit == "d" and n > 7)
+
+
 def read_post_comments():
     """Na otevřeném příspěvku přečte komentáře: [{name, text, indent, answered}].
     answered = pod komentářem už je moje odpověď (např. jsi odpověděl ručně)."""
-    found = []
+    found, collapsed = [], set()
+    d(descriptionStartsWith="Profilový obrázek").wait(timeout=15)  # komentáře se načítají se zpožděním
+    time.sleep(2)
     for _ in range(8):
         for sel in (d(descriptionStartsWith="Zobrazit další komentáře"), d(descriptionStartsWith="Zobrazit předchozí komentáře"),
                     d(descriptionMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*"),
                     d(textMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*")):
-            if sel.exists:  # rozbalit skryté komentáře a odpovědi (jinak by bot nepoznal, že už jsi odpověděl)
+            for _k in range(10):  # rozbalit všechny skryté komentáře a odpovědi (jinak by bot nepoznal, že už jsi odpověděl)
+                if not sel.exists:
+                    break
                 sel.click()
                 time.sleep(3)
         all_nodes = nodes()
+        for n in all_nodes:  # „Zobrazit 1 odpověď Filip Baldrych…“, co se nerozbalilo → komentář má odpověď
+            m = re.match(r"Zobrazit .*?odpově\w* (.+?)…?$", n.get("content-desc") or "")
+            if m:
+                collapsed.add(m.group(1).strip())
         new = 0
         for i, n in enumerate(all_nodes):
             desc = n.get("content-desc") or ""
             if not (n.get("class", "").endswith("ImageView") and desc.startswith("Profilový obrázek ")):
                 continue
-            name, x1 = desc[len("Profilový obrázek "):].strip(), bounds(n)[0]
+            name, x1 = desc[len("Profilový obrázek "):].split(",")[0].strip(), bounds(n)[0]  # „…, nezobrazený příběh“
             # za fotkou: tlačítko se jménem, pak tlačítko s textem komentáře
             rest = [m for m in all_nodes[i + 1:i + 12] if m.get("class", "").endswith("Button")]
             if not rest or (rest[0].get("content-desc") or rest[0].get("text")) != name or len(rest) < 2:
@@ -369,7 +394,10 @@ def read_post_comments():
             text = (rest[1].get("content-desc") or rest[1].get("text") or "").strip()
             if not text or text.startswith(("Odpovědět", "Tlačítko")):
                 continue
-            item = {"name": name, "text": text, "indent": x1 > 60, "answered": False}
+            # stáří komentáře („4 h“, „5 d“, „3 T“) je hned za jménem
+            age = next(((m.get("content-desc") or m.get("text") or "").strip() for m in all_nodes[i + 1:i + 8]
+                        if re.fullmatch(r"\d+\s*(s|m|min|h|d|T|t|r)\.?", (m.get("content-desc") or m.get("text") or "").strip())), "")
+            item = {"name": name, "text": text, "indent": x1 > 60, "answered": False, "age": age}
             if not any(f["name"] == name and f["text"] == text for f in found):
                 found.append(item)
                 new += 1
@@ -378,6 +406,8 @@ def read_post_comments():
         d.swipe(540, 1700, 540, 900, 0.3)
         time.sleep(2)
     for i, c in enumerate(found):  # odpovědi (odsazené) patří k předchozímu komentáři
+        if c["name"] in collapsed:
+            c["answered"] = True
         if not c["indent"]:
             j = i + 1
             while j < len(found) and found[j]["indent"]:
@@ -388,13 +418,15 @@ def read_post_comments():
 
 
 def _find_comment(name, text):
-    """Na otevřeném příspěvku najde komentář (jméno + začátek textu), vrací jeho bounds."""
+    """Na otevřeném příspěvku najde komentář (tlačítko se jménem a hned za ním tlačítko s textem), vrací bounds textu."""
     snippet = re.sub(r"\W+", "", text[:25]).lower()
-    for _ in range(6):
-        for n in nodes():
-            t = n.get("content-desc") or n.get("text") or ""
-            if name in t and snippet and snippet in re.sub(r"\W+", "", t).lower():
-                return bounds(n)
+    for _ in range(8):
+        buttons = [n for n in nodes() if n.get("class", "").endswith("Button")]
+        for i, n in enumerate(buttons[:-1]):
+            if (n.get("content-desc") or n.get("text")) == name:
+                t = buttons[i + 1].get("content-desc") or buttons[i + 1].get("text") or ""
+                if snippet and snippet in re.sub(r"\W+", "", t).lower():
+                    return bounds(buttons[i + 1])
         d.swipe(540, 1700, 540, 1000, 0.3)
         time.sleep(2)
     return None
@@ -417,13 +449,31 @@ def reply_to_comment(name, text, reply):
     x1, y1, x2, y2 = bounds(best)
     d.click((x1 + x2) // 2, (y1 + y2) // 2)
     time.sleep(3)
-    box = d(className="android.widget.AutoCompleteTextView")
-    if not box.exists:
-        box = d(className="android.widget.EditText")
-    box.set_text(reply)
-    time.sleep(2)
+    _type_into_box(reply)
+    if not d(descriptionStartsWith="Odpovídáte uživateli").exists and not d(textStartsWith="Odpovídáte uživateli").exists:
+        raise RuntimeError("Facebook: nejsem v režimu odpovědi na komentář – neodesílám")
     click_desc("Odeslat")
     time.sleep(5)
+
+
+def _type_into_box(text):
+    """Vloží text do pole pro komentář. Klávesnice ho umí celé zakrýt (uiautomator pak vidí jen ji) – proto ji
+    nejdřív schová (pole zůstane aktivní) a pak teprve hledá pole."""
+    time.sleep(2)  # klávesnice vyskakuje se zpožděním
+    for _ in range(3):
+        box = d(className="android.widget.AutoCompleteTextView")
+        if not box.exists:
+            box = d(className="android.widget.EditText")
+        if box.exists:
+            try:
+                box.set_text(text)
+                time.sleep(2)
+                return
+            except Exception:  # noqa: BLE001  – pole mezitím zakryla klávesnice
+                pass
+        d.press("back")  # schovat klávesnici
+        time.sleep(2)
+    raise RuntimeError("Facebook: nenašel jsem pole pro odpověď")
 
 
 def message_commenter(name, text, message):
@@ -447,17 +497,24 @@ def message_commenter(name, text, message):
     else:
         raise RuntimeError(f"na profilu {name} není tlačítko Zpráva")
     time.sleep(8)
-    if d.app_current().get("package") != "com.facebook.orca":
-        raise RuntimeError("po klepnutí na Zpráva se neotevřel Messenger")
+    # chat se otevře buď v Messengeru, nebo přímo ve Facebooku (okno chatu nad stránkou)
+    texts = [(n.get("content-desc") or n.get("text") or "") for n in ET.fromstring(d.dump_hierarchy()).iter("node")]
+    if any("poklepáním zobrazíte datum" in t or t.startswith(("Odesláno", "Zobrazeno")) for t in texts):
+        d.press("back")
+        return "existing"  # s člověkem už konverzace je – nic nového nepsat, ať to není divné
     box = d(className="android.widget.EditText")
     if not box.wait(timeout=10):
-        raise RuntimeError("v Messengeru chybí pole pro zprávu")
+        raise RuntimeError("v chatu chybí pole pro zprávu")
     box.click()
     box.set_text(message)
     time.sleep(1)
-    d(description="Poslat").click()
+    send = d(descriptionStartsWith="Poslat")
+    if not send.exists:
+        raise RuntimeError("v chatu chybí tlačítko Poslat")
+    send.click()
     time.sleep(3)
     d.press("back")
+    return "sent"
 
 
 if __name__ == "__main__":
