@@ -196,8 +196,34 @@ def read_list():
             continue  # skupinový chat / spamová skupina
         preview = desc[len(name):].lstrip(", ")
         preview = re.sub(r", Viděl\(a\) to .*$", "", preview)
-        out.append({"name": name, "preview": preview})
+        stamp = next((t2.strip() for c2, t2, _, (a1, b1, a2, b2) in all_nodes
+                      if t2 and b1 >= y1 and b2 <= y2 and LIST_TIME.match(t2.strip())), "")
+        out.append({"name": name, "preview": preview, "late": is_late(stamp)})
     return out
+
+
+LIST_TIME = re.compile(r"^(\d{1,2}:\d{2}|Po|Út|St|Čt|Pá|So|Ne|\d{1,2}\. ?\d{1,2}\.( ?\d{4})?)$")
+WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"]
+
+
+def is_late(stamp):
+    """Čas poslední zprávy ze seznamu chatů („12:22“, „Po“, „14. 10.“) je starší než 24 h?
+    U dne bez času se počítá s koncem toho dne, ať se bot neomlouvá zbytečně."""
+    today = datetime.now().date()
+    if not stamp or ":" in stamp:
+        return False  # dnešní zpráva
+    if stamp in WEEKDAYS:
+        days = (today.weekday() - WEEKDAYS.index(stamp)) % 7 or 7
+    else:
+        p = [int(x) for x in re.findall(r"\d+", stamp)]
+        try:
+            day = datetime(p[2] if len(p) > 2 else today.year, p[1], p[0]).date()
+        except ValueError:
+            return False
+        if day > today:
+            day = day.replace(year=day.year - 1)
+        days = (today - day).days
+    return days >= 2
 
 
 MSG = re.compile(r"^(.+?), (.*), poklepáním zobrazíte datum", re.S)
@@ -347,8 +373,11 @@ def transcript(messages):
     return "\n".join(lines)
 
 
-def ask_claude(name, messages):
+def ask_claude(name, messages, late=False):
     prompt = f"Konverzace se zákazníkem ({name}), nejstarší nahoře:\n\n{transcript(messages)}\n\nNapiš další odpověď za mě."
+    if late:
+        prompt += (" Zákazník čeká na odpověď déle než 24 hodin – zprávu začni krátkou omluvou za zpoždění"
+                   " (např. „Dobrý den, omlouvám se za pozdější odpověď.“) a pak normálně odpověz.")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # jen předplatné, nikdy placené API
     proc = subprocess.run(
         [
@@ -409,7 +438,7 @@ def handle_thread(conv):
     if not messages or messages[-1]["from"] != "them":
         return
 
-    answer = ask_claude(name, messages)
+    answer = ask_claude(name, messages, conv.get("late", False))
     t["handled"] = norm(transcript(messages[-5:]))
     msg = (answer.get("message") or "").strip()
     if answer.get("action") == "block":
