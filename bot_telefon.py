@@ -322,11 +322,11 @@ REPLY_SCHEMA = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["reply", "none", "block"]},
-        "message": {"type": "string"},
+        "messages": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
         "handoff": {"type": "boolean"},
         "note": {"type": "string"},
     },
-    "required": ["action", "message", "handoff", "note"],
+    "required": ["action", "messages", "handoff", "note"],
     "additionalProperties": False,
 }
 
@@ -335,7 +335,9 @@ def system_prompt():
     info = (HERE / "info.md").read_text(encoding="utf-8")
     return f"""Odpovídáš v Messengeru za prodejce ručně dělaných lampiček na zakázku (auta, motorky, loga, cokoliv podle fotky). Zákazníci píšou většinou z Facebook skupin, kde viděli jeho příspěvek.
 
-Píšeš za něj, v první osobě, česky. Vykáš (prodejce píše zákazníkům „Zdravím“, „Dobrý den“, „dejte vědět“). Když zákazník tyká nebo začne „Ahoj“, tykej mu taky (a pozdrav „Ahoj“). Krátce a přátelsky, jako člověk v chatu: 1–4 věty, žádné odrážky ani formální fráze, z emoji používej jen 🙂 (střídmě), žádné jiné. Nepiš víc zpráv najednou, než je potřeba.
+Píšeš za něj, v první osobě, česky. Vykáš (prodejce píše zákazníkům „Zdravím“, „Dobrý den“, „dejte vědět“). Když zákazník tyká nebo začne „Ahoj“, tykej mu taky (a pozdrav „Ahoj“). Piš jako člověk v chatu, ne jako robot ani e-mail: odpověď rozděl do 1–3 krátkých samostatných zpráv (pole messages), každá ideálně jedna věta, nejvýš dvě. Žádné slohovky, odrážky ani formální fráze. Z emoji používej jen 🙂 (nejvýš jednou), žádné jiné.
+- Neříkej všechny parametry najednou – odpověz jen na to, na co se zákazník ptá, a jednou otázkou posuň objednávku dál. Rozměr, napájení, barvy apod. zmiň, jen když se na ně ptá.
+- Když zákazník napíše motiv/značku (Kawasaki, BMW, Ferrari…), reaguj přirozeně a pozitivně, např. „Kawasaki by určitě šlo 🙂". Nikdy nepiš nic o tom, odkud vezmeš logo nebo podklady (žádné „logo si seženu sám") – to je jen interní informace pro tebe, aby ses po zákazníkovi nechtěl fotku loga.
 
 Jak prodejce typicky píše (drž se jeho stylu a postupu):
 - „Dobrý den, cena je 690 Kč. Odkud jste? Mohl bych vám ji poslat zásilkovnou?"
@@ -343,6 +345,7 @@ Jak prodejce typicky píše (drž se jeho stylu a postupu):
 - „Super, tak mi prosím pošlete adresu výdejního místa, telefonní číslo a e-mail."
 - „Jak s platbou? Budete chtít zaplatit celé předem, nebo jen poštovné a zbytek dám na dobírku?"
 - „Tak vás poprosím o 105 Kč na účet 1508200788/5500. Předem děkuji a dejte vědět, až pošlete."
+- Víc zpráv za sebou např.: „Dobrý den, Kawasaki by určitě šlo 🙂" / „Cena je 690 Kč + doprava." / „Odkud jste? Poslal bych vám ji Zásilkovnou."
 (Příklady ukazují jen styl – fakta, ceny a podmínky ber výhradně z INFORMACÍ O PRODEJI níže.)
 - Na tykání odpovídá tykáním („Ahoj, …"), jinak vyká. Píše krátce, bez formálních obratů, občas „Díky!", „Super", „Skvělý".
 Postup objednávky: motiv → cena → doprava (odkud je, zásilkovna?) → adresa výdejny, telefon, e-mail → způsob platby → číslo účtu a částka → předání prodejci.
@@ -356,7 +359,7 @@ Pravidla:
 - Pokud se zákazník přímo zeptá, jestli píše s robotem, nelži: řekni, že na rychlé odpovědi používáš asistenta a všechno po něm čteš.
 - Pokud poslední zpráva nepotřebuje odpověď (např. jen „ok", „díky", palec nahoru) a nic nečeká, dej action="none".
 - Pokud jde o spam, podvod nebo zprávu, která s prodejem lampiček nesouvisí, dej action="none".
-- Pokud se zákazník jakkoli ptá na autorská práva, licenci, ochrannou známku nebo povolení používat logo/značku (např. „máte povolení to logo používat?"), dej action="block", message="" a handoff=false – prodejce takového člověka blokuje a nic mu neodpovídá.
+- Pokud se zákazník jakkoli ptá na autorská práva, licenci, ochrannou známku nebo povolení používat logo/značku (např. „máte povolení to logo používat?"), dej action="block", messages=[] a handoff=false – prodejce takového člověka blokuje a nic mu neodpovídá.
 - „[fotka]" znamená, že zákazník poslal obrázek (nevidíš ho) – poděkuj a ber to jako dodanou fotku.
 - Vidíš jen posledních pár zpráv konverzace. Pokud chybí kontext, ptej se opatrně nebo předej (handoff=true).
 - note: jedna krátká věta pro prodejce, co se v konverzaci děje (např. „chce lampičku s E46, čeká na platbu").
@@ -376,8 +379,8 @@ def transcript(messages):
 def ask_claude(name, messages, late=False):
     prompt = f"Konverzace se zákazníkem ({name}), nejstarší nahoře:\n\n{transcript(messages)}\n\nNapiš další odpověď za mě."
     if late:
-        prompt += (" Zákazník čeká na odpověď déle než 24 hodin – zprávu začni krátkou omluvou za zpoždění"
-                   " (např. „Dobrý den, omlouvám se za pozdější odpověď.“) a pak normálně odpověz.")
+        prompt += (" Zákazník čeká na odpověď déle než 24 hodin – první zpráva ať je krátká omluva za zpoždění"
+                   " (např. „Dobrý den, omlouvám se za pozdější odpověď.“), pak normálně odpověz.")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # jen předplatné, nikdy placené API
     proc = subprocess.run(
         [
@@ -395,7 +398,7 @@ def ask_claude(name, messages, late=False):
         raise RuntimeError(f"claude: {(proc.stderr or proc.stdout)[:300]}")
     if out.get("is_error"):
         raise RuntimeError(f"claude: {out.get('result') or 'chyba'} (vyčerpaný limit předplatného?)")
-    return out.get("structured_output") or {"action": "none", "message": "", "handoff": True, "note": "Claude nevrátil odpověď – vyřiď ručně."}
+    return out.get("structured_output") or {"action": "none", "messages": [], "handoff": True, "note": "Claude nevrátil odpověď – vyřiď ručně."}
 
 
 # ---------- jedna konverzace ----------
@@ -440,7 +443,8 @@ def handle_thread(conv):
 
     answer = ask_claude(name, messages, conv.get("late", False))
     t["handled"] = norm(transcript(messages[-5:]))
-    msg = (answer.get("message") or "").strip()
+    msgs = [m.strip() for m in answer.get("messages") or [answer.get("message") or ""] if m.strip()]
+    msg = " / ".join(msgs)
     if answer.get("action") == "block":
         if not SEND:
             return log(name, "NÁVRH: zablokovat (neprovedeno)", answer.get("note", ""))
@@ -454,8 +458,11 @@ def handle_thread(conv):
         return
     if answer.get("action") == "reply" and msg:
         if SEND:
-            send_message(msg)
-            t["botSent"] = (t["botSent"] + [msg])[-20:]
+            for i, m in enumerate(msgs):
+                if i:
+                    time.sleep(random.uniform(3, 8))  # jako když člověk píše další zprávu
+                send_message(m)
+            t["botSent"] = (t["botSent"] + msgs)[-20:]
             t["botReplies"] += 1
             log(name, "odesláno", msg)
         else:

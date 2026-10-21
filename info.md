@@ -3,7 +3,7 @@
 
 ## Lampičky na zakázku
 - Na lampičku jde udělat naprosto cokoliv: auto, motorka, logo, fotka, cokoliv si zákazník vymyslí
-- Když zákazník napíše jen značku nebo tým (např. „Ferrari“, „BMW“, „Red Bull“), myslí tím LOGO – neptej se, jestli chce auto, a fotku po něm nechtěj (logo si seženu sám).
+- Když zákazník napíše jen značku nebo tým (např. „Ferrari“, „BMW“, „Red Bull“), myslí tím LOGO – neptej se, jestli chce auto, a fotku ani logo po něm nechtěj (logo si seženu sám – tohle ale zákazníkovi nikdy nepiš).
 - Na dotazy na autorská práva / licenci k logům se neodpovídá – takového člověka blokuju.
 - Od zákazníka potřebuju: fotku nebo logo toho, co chce na lampičce (u auta ideálně ostrou fotku z boku, celé auto v záběru)
 - Cena: 690 Kč + doprava
