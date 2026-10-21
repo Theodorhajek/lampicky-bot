@@ -531,7 +531,7 @@ CÍL: dostat zájemce do soukromých zpráv. V komentářích se nic nedomlouvá
 Dostaneš jeden komentář (nebo odpověď na můj komentář). Vrať:
 - comment_reply: krátká veřejná odpověď pod komentář (nebo "" = neodpovídat). Tykej (ve skupinách se tyká), pokud dotyčný nevyká. Max 1 krátká věta. Emoji jen 🙂 (nebo žádné), nikdy jiné. Obměňuj, ať to nevypadá jako robot, např. „Napiš mi zprávu a domluvíme se 🙂“, „Napiš SZ a domluvíme se“, „Pošli zprávu, domluvíme se 🙂“, „Klidně napiš do zpráv 🙂“.
 - send_dm: true, pokud má člověk o lampičku zájem (ptá se na cenu, chce ji, ptá se kde koupit, na jiný motiv…). Pak mu prodejce rovnou napíše do Messengeru, aby tam měl zprávu, až chat otevře.
-- dm: úvodní zpráva do Messengeru (když send_dm). Tykej, 1–2 krátké věty, přátelsky, jako člověk, emoji jen 🙂: např. „Ahoj, lampička Tří sester stojí 690 Kč + doprava 🙂 Chtěl bys ji taky, nebo jiný motiv?“ Nepiš, že ses dozvěděl z komentáře robotem apod.
+- dm: úvodní zpráva do Messengeru (když send_dm). Tykej, 1–2 krátké věty, přátelsky, jako člověk, emoji jen 🙂: např. „Ahoj, lampička stojí 690 Kč + doprava 🙂 Jakou bys chtěl?“ Když se ptá na něco konkrétního (barva, motiv, rozměr – sklo 15 × 15 cm, barvy světla se přepínají), odpověz na to krátce. Nepiš, odkud vezmeš logo. Nepiš, že ses dozvěděl z komentáře robotem apod.
 - note: krátce pro prodejce, co se stalo.
 
 PRAVIDLA:
@@ -547,7 +547,8 @@ PRAVIDLA:
 
 def ask_claude_comment(item):
     kind = "Odpověď na můj komentář" if item["reply"] else "Komentář pod mým příspěvkem"
-    prompt = f"{kind} od {item['name']}: „{item['text']}“\n(celé upozornění: {item['key']})"
+    prompt = (f"{kind} od {item['name']}: „{item['text']}“\n(skupina: {item.get('group') or '?'};"
+              f" můj příspěvek: ručně dělané LED lampičky s gravírovaným motivem)")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     proc = subprocess.run(
         [
@@ -565,61 +566,78 @@ def ask_claude_comment(item):
 
 
 def check_comments():
-    """Projde upozornění na komentáře ve Facebooku a vyřídí nové."""
+    """Projde upozornění na komentáře pod mými příspěvky, otevře příspěvek a vyřídí komentáře, na které ještě
+    nikdo neodpověděl (bot ani ty ručně). Odpovědi pod komentáře napíše hned, zprávy do Messengeru až potom."""
     import fb  # noqa: PLC0415
 
     fb.d = d
     done = state.setdefault("comments", {})
+    seen = state.setdefault("commentNotifs", {})
     fb.open_notifications()
-    items = [i for i in fb.comment_notifications() if i["key"] not in done]
-    if not state.get("commentsInitialized") and not CATCH_UP:
-        for i in items:  # při prvním spuštění staré komentáře jen zapamatovat
-            done[i["key"]] = "staré"
-        state["commentsInitialized"] = True
-        save_state()
-        return
-    for item in items:
-        name = item["name"]
-        try:
-            answer = ask_claude_comment(item)
-            done[item["key"]] = answer.get("note", "")
-            save_state()
-            reply, dm = answer["comment_reply"].strip(), answer["dm"].strip()
-            if not SEND:
-                log(name, "KOMENTÁŘ – NÁVRH (neodesláno)", f"„{item['text']}“ → {reply or '—'} | DM: {dm if answer['send_dm'] else '—'}")
-                continue
-            t = thread(name)
-            want_dm = answer["send_dm"] and dm and not t.get("dmFromComment") and not t.get("blocked")
-            if not reply and not want_dm:
-                log(name, "komentář bez reakce", f"„{item['text']}“ – {answer.get('note', '')}")
-                continue
-            # otevřít příspěvek přes upozornění (seznam se mezitím mohl posunout – najít znovu)
-            fb.open_notifications()
-            match = next((i for i in fb.comment_notifications() if i["key"] == item["key"]), None)
-            if not match:
-                raise RuntimeError("upozornění na komentář zmizelo")
-            x1, y1, x2, y2 = match["bounds"]
-            d.click((x1 + x2) // 2, (y1 + y2) // 2)
-            time.sleep(8)
-            if reply:
-                fb.reply_to_comment(name, item["text"], reply)
-                log(name, "komentář – odpověděl jsem", f"„{item['text']}“ → {reply}")
-            if want_dm:
+    for notif in [n for n in fb.all_comment_notifications() if n["key"] not in seen]:
+        fb.open_notification(notif["key"])
+        comments = [c for c in fb.read_post_comments()
+                    if c["name"] != fb.ME and not c["answered"] and c["indent"] == notif["reply"]
+                    and f"{c['name']}|{c['text'][:80]}" not in done]
+        merged = {}  # víc komentářů od jednoho člověka = jedna odpověď a jedna zpráva
+        for c in comments:
+            if c["name"] in merged:
+                merged[c["name"]]["text"] += " / " + c["text"]
+                merged[c["name"]].setdefault("also", []).append(f"{c['name']}|{c['text'][:80]}")
+            else:
+                merged[c["name"]] = dict(c, first=c["text"])
+        dms = []
+        for c in merged.values():
+            name, ckey = c["name"], f"{c['name']}|{c['first'][:80]}"
+            item = {"name": name, "text": c["text"], "reply": notif["reply"], "group": notif["group"], "key": notif["key"]}
+            try:
+                answer = ask_claude_comment(item)
+                reply, dm = answer["comment_reply"].strip(), answer["dm"].strip()
+                if SEND:
+                    for k in [ckey] + c.get("also", []):
+                        done[k] = answer.get("note", "")
+                    save_state()
+                if not SEND:
+                    log(name, "KOMENTÁŘ – NÁVRH (neodesláno)", f"„{c['text']}“ → {reply or '—'} | DM: {dm if answer['send_dm'] else '—'}")
+                    continue
+                t = thread(name)
+                if answer["send_dm"] and dm and not t.get("dmFromComment") and not t.get("blocked") and not t.get("handled"):
+                    dms.append((c, dm))
+                if not reply:
+                    log(name, "komentář bez veřejné odpovědi", f"„{c['text']}“ – {answer.get('note', '')}")
+                    continue
+                fb.open_notification(notif["key"])  # příspěvek znovu odshora, ať se komentář najde
+                fb.reply_to_comment(name, c["first"], reply)
+                log(name, "komentář – odpověděl jsem", f"„{c['text']}“ → {reply}")
+                time.sleep(random.uniform(10, 30))
+            except Exception as e:  # noqa: BLE001
+                comment_error(name, c["text"], e)
+        for c, dm in dms:
+            name = c["name"]
+            try:
                 time.sleep(random.uniform(20, 60))
-                fb.message_commenter(name, item["text"], dm)
+                fb.open_notification(notif["key"])
+                fb.message_commenter(name, c["first"], dm)
+                t = thread(name)
                 t["botSent"] = (t["botSent"] + [dm])[-20:]
                 t["botReplies"] += 1
                 t["dmFromComment"] = True
                 log(name, "komentář – poslal jsem zprávu", dm)
+                save_state()
+            except Exception as e:  # noqa: BLE001
+                comment_error(name, c["text"], e)
+        if SEND:
+            seen[notif["key"]] = datetime.now().strftime("%d. %m. %H:%M")
             save_state()
-        except Exception as e:  # noqa: BLE001
-            log(name, "KOMENTÁŘ – CHYBA, vyřiď ručně", f"„{item['text']}“: {e}")
-            zasek("Facebook – komentář/zpráva z komentáře", str(e), e)
-            with open(HERE / "errors.log", "a", encoding="utf-8") as f:
-                f.write(f"\n=== {datetime.now():%d. %m. %Y %H:%M:%S} – komentář od {name}: „{item['text']}“\n")
-                f.write("".join(traceback.format_exception(type(e), e, e.__traceback__)))
-            notify("Lampičky – komentář vyřiď ručně", f"{name}: „{item['text']}“"[:200])
-        time.sleep(random.uniform(10, 30))
+
+
+def comment_error(name, text, e):
+    log(name, "KOMENTÁŘ – CHYBA, vyřiď ručně", f"„{text}“: {e}")
+    zasek("Facebook – komentář/zpráva z komentáře", str(e), e)
+    with open(HERE / "errors.log", "a", encoding="utf-8") as f:
+        f.write(f"\n=== {datetime.now():%d. %m. %Y %H:%M:%S} – komentář od {name}: „{text}“\n")
+        f.write("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+    notify("Lampičky – komentář vyřiď ručně", f"{name}: „{text}“"[:200])
 
 
 def facebook_comment_notifications():
@@ -640,6 +658,39 @@ def facebook_comment_notifications():
 QUEUE_FILE = HERE / "fronta.json"
 
 
+QUESTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {"skip": {"type": "boolean"}, "answers": {"type": "array", "items": {"type": "string"}}, "reason": {"type": "string"}},
+    "required": ["skip", "answers", "reason"],
+    "additionalProperties": False,
+}
+
+
+def answer_group_questions(texts, fields):
+    """Claude vyhodnotí formulář s otázkami skupiny (texty z obrazovky) a navrhne odpovědi podle o_mne.md."""
+    about = (HERE / "o_mne.md").read_text(encoding="utf-8")
+    system = f"""Pomáháš se žádostí o členství ve facebookové skupině. Dostaneš texty z obrazovky formuláře (otázky, pravidla, tlačítka)
+a počet textových polí. Vrať answers = odpovědi na otázky v pořadí shora dolů (jedna na každé textové pole), česky, krátce, přirozeně, jako člověk.
+Odpovídej pravdivě jen podle informací O MNĚ. Nikdy si nevymýšlej (třeba jakou mám motorku, kde bydlím, kolik mi je).
+skip=true (a do reason napiš proč) když: na otázku nejde pravdivě odpovědět z O MNĚ, pravidla zakazují prodej / reklamu / nabízení výrobků,
+skupina je bazar/inzerce, nebo formuláři nerozumíš. Souhlas s pravidly bot zaškrtne sám.
+
+O MNĚ:
+{about}"""
+    prompt = f"Texty na obrazovce:\n" + "\n".join(f"- {t}" for t in texts[:80]) + f"\n\nPočet textových polí: {fields}"
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    proc = subprocess.run(
+        [CONFIG["claudePath"], "-p", "--output-format", "json", "--model", CONFIG["model"], "--effort", CONFIG["effort"],
+         "--system-prompt", system, "--json-schema", json.dumps(QUESTIONS_SCHEMA),
+         "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence"],
+        input=prompt, capture_output=True, text=True, encoding="utf-8", cwd=tempfile.gettempdir(), env=env, timeout=180,
+    )
+    out = json.loads(proc.stdout).get("structured_output") or {"skip": True, "answers": [], "reason": "Claude nevrátil odpověď"}
+    zasek("Otázky při přidání do skupiny" + (" – přeskočeno" if out["skip"] else " – vyplněno"),
+          f"{out.get('reason', '')} | odpovědi: {out.get('answers')}")  # uložit ke kontrole
+    return out
+
+
 def run_queue():
     """Provede nejvýš jednu splatnou úlohu z fronty: přidat se do skupiny / zveřejnit příspěvek."""
     if not QUEUE_FILE.exists():
@@ -657,7 +708,8 @@ def run_queue():
 
     fb.d = d
     try:
-        status, shot = fb.join_or_post(job["group"], job["members"], [str(HERE / p) for p in job.get("photos") or [job["photo"]]], job["text"])
+        status, shot = fb.join_or_post(job["group"], job["members"], [str(HERE / p) for p in job.get("photos") or [job["photo"]]], job["text"],
+                                       answerer=answer_group_questions)
     except Exception as e:  # noqa: BLE001
         status, shot = "chyba", None
         zasek(f"Facebook – příspěvek do skupiny", f"{job['group']}: {e}", e)  # dřív, než se příspěvek zahodí
@@ -678,6 +730,15 @@ def run_queue():
             if j["status"] == "ceka":
                 j["due"] = max(j.get("due", 0), time.time() + random.uniform(*gap) * 60)
         log(job["group"], "PŘÍSPĚVEK ZVEŘEJNĚN" if status == "posted" else "PŘÍSPĚVEK ČEKÁ NA SCHVÁLENÍ ADMINEM", job["text"])
+    elif status == "no-permission":
+        job["status"] = "nelze-postovat"
+        log(job["group"], "ve skupině nemáme oprávnění zveřejňovat – vyřazeno z fronty")
+        notify("Lampičky – skupina vyřazena", f"{job['group']}: nemáme oprávnění zveřejňovat příspěvky")
+    elif status == "skipped-questions":
+        job["status"] = "otazky-vyres-rucne"
+        job["error"] = fb.LAST_SKIP_REASON
+        log(job["group"], "otázky ke členství – bot neodpověděl, vyřiď ručně", fb.LAST_SKIP_REASON)
+        notify("Lampičky – otázky ke skupině", f"{job['group']}: {fb.LAST_SKIP_REASON}"[:200])
     elif status == "sell-group":
         job["status"] = "preskoceno-bazar"
         log(job["group"], "bazarová skupina (jen inzeráty s cenou) – přeskakuju")

@@ -159,35 +159,96 @@ def screenshot(name):
 
 
 def membership():
-    """Na otevřené skupině: 'member' / 'pending' / 'none'."""
-    descs = " | ".join((n.get("content-desc") or n.get("text") or "") for n in nodes())
-    if "Přidal(a) se" in descs or "Napište něco…" in descs:
-        return "member"
+    """Na otevřené skupině: 'member' / 'pending' / 'none' / 'no-permission' (člen, ale nesmí postovat).
+    Pozor: veřejné skupiny ukazují „Napište něco…“ i nečlenům – rozhoduje tlačítko Přidat se / Přidal(a) se."""
+    all_nodes = nodes()
+    descs = " | ".join((n.get("content-desc") or n.get("text") or "") for n in all_nodes)
+    if "nemáte oprávnění" in descs:
+        return "no-permission"
     if "Zrušit žádost" in descs:
         return "pending"
+    if "Přidat se do skupiny" in descs or any((n.get("content-desc") or n.get("text")) == "Přidat se" for n in all_nodes):
+        return "none"
+    if "Přidal(a) se" in descs or "Napište něco…" in descs:
+        return "member"
     return "none"
 
 
-def join_open_group():
-    """Na otevřené skupině klepne Přidat se. Otázky/pravidla nevyplňuje (zavře je). Vrací stav členství."""
+def questions_screen():
+    """Je otevřený formulář s otázkami / pravidly skupiny? Vrací texty na obrazovce (nebo None)."""
+    all_nodes = nodes()
+    texts = [(n.get("content-desc") or n.get("text") or "").strip() for n in all_nodes]
+    joined = " | ".join(texts)
+    fields = [n for n in all_nodes if n.get("class", "").endswith(("EditText", "AutoCompleteTextView"))]
+    if not fields and not re.search(r"Odpovězte|otázk|Otázk|Pravidla skupiny|Souhlasím", joined):
+        return None
+    return {"texts": [t for t in texts if t], "fields": len(fields)}
+
+
+def fill_questions(answers):
+    """Vyplní odpovědi do prázdných polí (shora dolů, i po posunutí), zaškrtne souhlas s pravidly a odešle žádost."""
+    todo = [a for a in answers if a]
+    for _ in range(5):
+        fields = sorted([n for n in nodes() if n.get("class", "").endswith(("EditText", "AutoCompleteTextView"))
+                         and not (n.get("text") or "").strip()], key=lambda n: bounds(n)[1])
+        for n in fields:
+            if not todo:
+                break
+            x1, y1, x2, y2 = bounds(n)
+            d.click((x1 + x2) // 2, (y1 + y2) // 2)
+            time.sleep(1)
+            d(focused=True).set_text(todo.pop(0))
+            time.sleep(1)
+        for n in nodes():  # souhlas s pravidly
+            if n.get("checkable") == "true" and n.get("checked") == "false":
+                x1, y1, x2, y2 = bounds(n)
+                d.click((x1 + x2) // 2, (y1 + y2) // 2)
+                time.sleep(1)
+        for label in ("Odeslat", "Odeslat žádost", "Hotovo"):
+            sel = d(description=label) if d(description=label).exists else d(text=label)
+            if sel.exists and not todo:
+                sel.click()
+                time.sleep(6)
+                return True
+        d.swipe(540, 1800, 540, 800, 0.3)  # další otázky / tlačítko Odeslat bývají níž
+        time.sleep(2)
+    return False
+
+
+def join_open_group(answerer=None):
+    """Na otevřené skupině klepne Přidat se. Když skupina chce odpovědi na otázky, zeptá se answerer(texty, počet polí)
+    → {"skip": bool, "answers": [...], "reason": "…"} a vyplní je. Vrací stav členství (případně 'skipped-questions')."""
     for sel in (d(description="Přidat se", className="android.widget.Button"), d(descriptionStartsWith="Přidat se do skupiny"), d(text="Přidat se")):
         if sel.exists:
             sel.click()
             time.sleep(6)
             break
-    if d(description="Zavřít").exists and (d(textContains="Otázky").exists or d(descriptionContains="Otázky").exists or d(descriptionContains="Pravidla").exists):
-        d(description="Zavřít").click()
-        time.sleep(3)
+    q = questions_screen()
+    if q:
+        screenshot("otazky")
+        res = answerer(q["texts"], q["fields"]) if answerer else {"skip": True, "reason": "bez AI"}
+        if res.get("skip") or not fill_questions(res.get("answers") or []):
+            if d(description="Zavřít").exists:
+                d(description="Zavřít").click()
+            else:
+                d.press("back")
+            time.sleep(3)
+            global LAST_SKIP_REASON
+            LAST_SKIP_REASON = res.get("reason") or "formulář se nepodařilo odeslat"
+            return "skipped-questions"
     return membership()
 
 
-def join_or_post(group, members, photos, text):
+LAST_SKIP_REASON = ""
+
+
+def join_or_post(group, members, photos, text, answerer=None):
     """Otevře skupinu; když nejsem člen, přidá se. Když jsem člen, zveřejní příspěvek.
     Vrací (stav, screenshot): 'posted' / 'posted-pending' (čeká na schválení adminem) / 'pending' / 'none'."""
     open_group(group, members)
     state = membership()
     if state == "none":
-        state = join_open_group()
+        state = join_open_group(answerer)
     if state != "member":
         return state, None
     if not d(description="Napište něco…").exists and (d(description="Co prodáváte?").exists or d(text="Co prodáváte?").exists):
@@ -212,27 +273,118 @@ def post(group, members, photo, text, only_prepare=False):
 
 # ---------- komentáře pod mými příspěvky ----------
 
-COMMENT_RE = re.compile(r"^(?P<name>.+?) (?P<kind>okomentoval\(a\)|okomentoval|okomentovala|odpověděl\(a\)|odpověděl|odpověděla)\b.*?„(?P<text>.*?)“")
+ME = "Martin Hejduk"
+# „Václav Kadavý okomentoval váš příspěvek ve skupině Motorkáři CZ/SK.. 5 d. Nepřečteno“
+# „Jaroslav Strakoš s 5 dalšími okomentovali váš příspěvek ve skupině …“, „X odpověděl(a) na váš komentář …: „text““
+COMMENT_RE = re.compile(r"^(?P<name>.+?) (?:s \d+ dalšími |a \d+ dalších )?(?P<kind>okomentoval\w*(?:\(a\))?|odpověděl\w*(?:\(a\))?)"
+                        r" (?:na )?(?P<what>váš|vaši|vás|vaše)\b.*?(?:ve skupině (?P<group>.+?))?(?:[.:]|$)")
+TIME_TAIL = re.compile(r"\.*\s*\d+\s*(?:s|m|h|d|t|r)\.?(?:\s*Nepřečteno)?\s*$|\s*Nepřečteno\s*$")
 
 
 def open_notifications():
+    """Karta Upozornění ve Facebooku (ověří, že se opravdu otevřela)."""
     home()
-    d(descriptionStartsWith="Upozornění").click()
-    time.sleep(5)
+    for _ in range(3):
+        d(descriptionStartsWith="Upozornění, karta").click()
+        time.sleep(5)
+        if d(description="Spravovat nastavení upozornění").exists or d(descriptionStartsWith="Spravovat nastavení").exists:
+            return
+    raise RuntimeError("Facebook: karta Upozornění se neotevřela")
 
 
 def comment_notifications():
-    """Komentáře/odpovědi v kartě Upozornění: [{key, name, text, reply, bounds}]."""
+    """Upozornění na komentáře pod MÝMI příspěvky / odpovědi na mé komentáře: [{key, name, group, reply, bounds}].
+    key je bez času („5 d.“), aby se neměnil."""
     out = []
     for n in nodes():
-        t = (n.get("content-desc") or "").replace("\xa0", " ")
-        if not n.get("class", "").endswith("Button") or "„" not in t or t.startswith("Spravovat"):
+        t = re.sub(r"\s+", " ", (n.get("content-desc") or "").replace("\xa0", " ")).strip()
+        if not n.get("class", "").endswith("Button") or t.startswith("Spravovat"):
             continue
         m = COMMENT_RE.search(t)
-        if m:
-            out.append({"key": re.sub(r"\s+", " ", t)[:160], "name": m["name"].strip(), "text": m["text"].strip(),
+        if m and not any(o["key"] == TIME_TAIL.sub("", t) for o in out):
+            out.append({"key": TIME_TAIL.sub("", t)[:200], "name": m["name"].strip(), "group": (m["group"] or "").strip(" ."),
                         "reply": m["kind"].startswith("odpověd"), "bounds": bounds(n)})
     return out
+
+
+def all_comment_notifications(screens=12):
+    """Projde seznam upozornění odshora (posouvá) a vrátí všechna upozornění na komentáře (bez bounds)."""
+    out = []
+    for _ in range(screens):
+        for i in comment_notifications():
+            if not any(o["key"] == i["key"] for o in out):
+                out.append(i)
+        _more_notifications()
+        d.swipe(540, 1800, 540, 800, 0.3)
+        time.sleep(2)
+    return out
+
+
+def _more_notifications():
+    """Na konci seznamu je tlačítko „Předchozí upozornění“ – načte starší."""
+    sel = d(description="Předchozí upozornění")
+    if sel.exists:
+        sel.click()
+        time.sleep(4)
+
+
+def open_notification(key):
+    """Otevře kartu Upozornění, najde upozornění podle klíče (posouvá dolů) a otevře ho."""
+    open_notifications()
+    for _ in range(14):
+        match = next((i for i in comment_notifications() if i["key"] == key), None)
+        if match:
+            x1, y1, x2, y2 = match["bounds"]
+            d.click((x1 + x2) // 2, (y1 + y2) // 2)
+            time.sleep(8)
+            return
+        _more_notifications()
+        d.swipe(540, 1800, 540, 800, 0.3)
+        time.sleep(2)
+    raise RuntimeError("upozornění na komentář jsem nenašel")
+
+
+def read_post_comments():
+    """Na otevřeném příspěvku přečte komentáře: [{name, text, indent, answered}].
+    answered = pod komentářem už je moje odpověď (např. jsi odpověděl ručně)."""
+    found = []
+    for _ in range(8):
+        for sel in (d(descriptionStartsWith="Zobrazit další komentáře"), d(descriptionStartsWith="Zobrazit předchozí komentáře"),
+                    d(descriptionMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*"),
+                    d(textMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*")):
+            if sel.exists:  # rozbalit skryté komentáře a odpovědi (jinak by bot nepoznal, že už jsi odpověděl)
+                sel.click()
+                time.sleep(3)
+        all_nodes = nodes()
+        new = 0
+        for i, n in enumerate(all_nodes):
+            desc = n.get("content-desc") or ""
+            if not (n.get("class", "").endswith("ImageView") and desc.startswith("Profilový obrázek ")):
+                continue
+            name, x1 = desc[len("Profilový obrázek "):].strip(), bounds(n)[0]
+            # za fotkou: tlačítko se jménem, pak tlačítko s textem komentáře
+            rest = [m for m in all_nodes[i + 1:i + 12] if m.get("class", "").endswith("Button")]
+            if not rest or (rest[0].get("content-desc") or rest[0].get("text")) != name or len(rest) < 2:
+                continue
+            text = (rest[1].get("content-desc") or rest[1].get("text") or "").strip()
+            if not text or text.startswith(("Odpovědět", "Tlačítko")):
+                continue
+            item = {"name": name, "text": text, "indent": x1 > 60, "answered": False}
+            if not any(f["name"] == name and f["text"] == text for f in found):
+                found.append(item)
+                new += 1
+        if not new and d(descriptionStartsWith="Napište veřejný komentář").exists and _ > 0:
+            break
+        d.swipe(540, 1700, 540, 900, 0.3)
+        time.sleep(2)
+    for i, c in enumerate(found):  # odpovědi (odsazené) patří k předchozímu komentáři
+        if not c["indent"]:
+            j = i + 1
+            while j < len(found) and found[j]["indent"]:
+                if found[j]["name"] == ME:
+                    c["answered"] = True
+                j += 1
+    return found
 
 
 def _find_comment(name, text):
