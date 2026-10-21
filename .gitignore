@@ -11,6 +11,7 @@ log.csv
 errors.log
 *.log
 posty/screeny/
+problemy/
 konverzace*.json
 
 # klíče

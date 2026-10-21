@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import traceback
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -122,6 +123,40 @@ def dismiss_popups():
     return False
 
 
+# ---------- zaseknutí: screenshot + obrazovka do problemy/, projdeme je a bota naučíme ----------
+
+PROBLEMS = HERE / "problemy"
+
+
+def zasek(kind, detail="", exc=None):
+    """Uloží, na čem se bot zasekl: screenshot, rozložení obrazovky (XML) a popis do problemy/<čas>-<druh>/.
+    Stejný problém se během hodiny ukládá jen jednou (jinak se jen zvýší počet)."""
+    try:
+        PROBLEMS.mkdir(exist_ok=True)
+        index = PROBLEMS / "seznam.json"
+        items = json.loads(index.read_text(encoding="utf-8")) if index.exists() else []
+        key = f"{kind}|{str(detail)[:80]}"
+        recent = next((i for i in reversed(items) if i["key"] == key and i["status"] == "novy"
+                       and time.time() - i["lastTs"] < 3600), None)
+        if recent:
+            recent.update(count=recent["count"] + 1, lastTs=time.time())
+        else:
+            folder = PROBLEMS / f"{datetime.now():%Y%m%d-%H%M%S}-{re.sub(r'[^a-z0-9]+', '-', unicodedata.normalize('NFKD', kind.lower()).encode('ascii', 'ignore').decode())[:30]}"
+            folder.mkdir()
+            try:
+                d.screenshot(str(folder / "screenshot.png"))
+                (folder / "obrazovka.xml").write_text(d.dump_hierarchy(), encoding="utf-8")
+                app = d.app_current().get("activity", "")
+            except Exception:  # noqa: BLE001
+                app = "(telefon nešel přečíst)"
+            items.append({"key": key, "kind": kind, "detail": str(detail)[:300], "folder": folder.name, "activity": app,
+                          "time": f"{datetime.now():%d. %m. %Y %H:%M}", "lastTs": time.time(), "count": 1, "status": "novy",
+                          "error": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-3000:] if exc else ""})
+        index.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001  – ukládání problému nikdy nesmí shodit bota
+        print("  (zaseknutí se nepodařilo uložit:", e, ")", flush=True)
+
+
 def go_home():
     """Messenger na popředí, karta Chaty, seznam úplně nahoře. Při zaseknutí zavře popupy, případně restartuje Messenger."""
     for attempt in range(3):
@@ -131,6 +166,7 @@ def go_home():
         except RuntimeError:
             if attempt == 0 and dismiss_popups():
                 continue
+            zasek("Messenger – nenašel jsem seznam chatů, restartuji", f"pokus {attempt + 1}")
             d.app_stop(PKG)  # poslední možnost: Messenger restartovat
             time.sleep(2)
     _go_home()
@@ -578,6 +614,7 @@ def check_comments():
             save_state()
         except Exception as e:  # noqa: BLE001
             log(name, "KOMENTÁŘ – CHYBA, vyřiď ručně", f"„{item['text']}“: {e}")
+            zasek("Facebook – komentář/zpráva z komentáře", str(e), e)
             with open(HERE / "errors.log", "a", encoding="utf-8") as f:
                 f.write(f"\n=== {datetime.now():%d. %m. %Y %H:%M:%S} – komentář od {name}: „{item['text']}“\n")
                 f.write("".join(traceback.format_exception(type(e), e, e.__traceback__)))
@@ -623,6 +660,7 @@ def run_queue():
         status, shot = fb.join_or_post(job["group"], job["members"], [str(HERE / p) for p in job.get("photos") or [job["photo"]]], job["text"])
     except Exception as e:  # noqa: BLE001
         status, shot = "chyba", None
+        zasek(f"Facebook – příspěvek do skupiny", f"{job['group']}: {e}", e)  # dřív, než se příspěvek zahodí
         job["error"] = str(e)
         job["tries"] = job.get("tries", 0) + 1
         try:
@@ -683,6 +721,7 @@ def check_list(source, opener):
         except Exception as e:  # noqa: BLE001
             t["errors"] = t.get("errors", 0) + 1
             log(c["name"], "CHYBA", str(e))
+            zasek("Messenger – chyba v konverzaci", str(e), e)
             with open(HERE / "errors.log", "a", encoding="utf-8") as f:
                 f.write(f"\n=== {datetime.now():%d. %m. %Y %H:%M:%S} – konverzace {c['name']}, chyba č. {t['errors']}\n")
                 f.write("".join(traceback.format_exception(type(e), e, e.__traceback__)))
@@ -790,6 +829,8 @@ def report_error(e, failures, wait):
         app = d.app_current().get("activity", "")
     except Exception:  # noqa: BLE001
         screen, app = "(obrazovku nešlo přečíst)", ""
+    if "not found" not in str(e):  # odpojený telefon není problém s ovládáním
+        zasek("Obecná chyba bota", str(e), e)
     with open(HERE / "errors.log", "a", encoding="utf-8") as f:
         f.write(f"\n=== {stamp:%d. %m. %Y %H:%M:%S} – chyba č. {failures} za sebou, další pokus za {wait // 60} min\n")
         f.write(f"aktivita: {app}\nobrazovka: {screen}\n")
