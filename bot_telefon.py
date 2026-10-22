@@ -311,6 +311,31 @@ def open_chat(name):
     time.sleep(2)
 
 
+PHOTOS = HERE / "fotky"  # skutečné fotky hotových lampiček (název souboru = motiv), bot je posílá zákazníkům
+
+
+def send_photo(path):
+    """Pošle do otevřeného chatu fotku: nahraje ji do galerie (bude první) → Galerie → první fotka → POSLAT."""
+    dest = f"/sdcard/Pictures/Lampicky/{datetime.now():%Y%m%d-%H%M%S}-{Path(path).name}"
+    subprocess.run(["adb", "push", str(path), dest], check=True, capture_output=True)
+    subprocess.run(["adb", "shell", "touch", dest], capture_output=True)
+    subprocess.run(["adb", "shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", f"file://{dest}"], capture_output=True)
+    time.sleep(3)
+    tap_desc("Otevře se fotogalerie.", exact=True)
+    time.sleep(4)
+    first = d(descriptionStartsWith="Fotka byla pořízena")
+    if not first.wait(timeout=8):
+        raise RuntimeError("v galerii chatu nejsou fotky (chybí oprávnění?)")
+    first.click()
+    time.sleep(2)
+    send = d(description="POSLAT") if d(description="POSLAT").exists else d(text="POSLAT")
+    if not send.exists:
+        raise RuntimeError("v galerii chybí tlačítko POSLAT")
+    send.click()
+    time.sleep(6)
+    d.press("back")  # zavřít galerii
+
+
 def send_message(text):
     box = d(className="android.widget.EditText")
     box.click()
@@ -367,10 +392,11 @@ REPLY_SCHEMA = {
     "properties": {
         "action": {"type": "string", "enum": ["reply", "none", "block"]},
         "messages": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+        "photo": {"type": "string"},
         "handoff": {"type": "boolean"},
         "note": {"type": "string"},
     },
-    "required": ["action", "messages", "handoff", "note"],
+    "required": ["action", "messages", "photo", "handoff", "note"],
     "additionalProperties": False,
 }
 
@@ -379,8 +405,12 @@ def system_prompt():
     info = (HERE / "info.md").read_text(encoding="utf-8")
     return f"""Odpovídáš v Messengeru za prodejce ručně dělaných lampiček na zakázku (auta, motorky, loga, cokoliv podle fotky). Zákazníci píšou většinou z Facebook skupin, kde viděli jeho příspěvek.
 
-Píšeš za něj, v první osobě, česky. Vykáš (prodejce píše zákazníkům „Zdravím“, „Dobrý den“, „dejte vědět“). Když zákazník tyká nebo začne „Ahoj“, tykej mu taky (a pozdrav „Ahoj“). Piš jako člověk v chatu, ne jako robot ani e-mail: odpověď rozděl do 1–3 krátkých samostatných zpráv (pole messages), každá ideálně jedna věta, nejvýš dvě. Žádné slohovky, odrážky ani formální fráze. Z emoji používej jen 🙂 (nejvýš jednou), žádné jiné.
-- Neříkej všechny parametry najednou – odpověz jen na to, na co se zákazník ptá, a jednou otázkou posuň objednávku dál. Rozměr, napájení, barvy apod. zmiň, jen když se na ně ptá.
+Píšeš za něj, v první osobě, česky. Vykáš (prodejce píše zákazníkům „Zdravím“, „Dobrý den“, „dejte vědět“). Když zákazník tyká nebo začne „Ahoj“, tykej mu taky (a pozdrav „Ahoj“). Piš úsporně jako člověk na mobilu, ne jako robot ani e-mail. Většinou JEDNA krátká zpráva (pole messages), druhou přidej jen když je opravdu potřeba (nejvýš 2). Každá zpráva max. jedna krátká věta. Čím kratší, tím lepší. Žádné slohovky, odrážky ani formální fráze. Z emoji jen 🙂 (nejvýš jednou), žádné jiné.
+- Odpověz jen na to, na co se zákazník ptá. Nic navíc nevysvětluj, neopakuj, co už v konverzaci zaznělo, a nepiš samozřejmosti.
+- Nanejvýš jedna otázka, a jen když posouvá objednávku. Žádné výplňové výzvy typu „až se podíváte, dejte vědět", „kdyby něco, napište", „vyberte si, jakého dopravce byste chtěla" – zákazník ví, co dělat.
+- Rozměr, napájení, barvy, materiál apod. zmiň, jen když se na ně ptá.
+- Fotky: když zákazník chce vidět, jak lampička vypadá, a v SKUTEČNÝCH FOTKÁCH níže je odpovídající motiv, dej do photo název souboru (pošle se po zprávách) a napiš krátce např. „Tohle BMW jsem už jednou dělal 🙂". Když odpovídající fotka není, photo="" a handoff=true (fotku pošle prodejce). Jinak vždy photo="".
+- Na potvrzení stačí „OK" nebo „Rozumím." – nikdy „Rozumím, děkuji", „Děkuji za informaci" apod.
 - Když zákazník napíše motiv/značku (Kawasaki, BMW, Ferrari…), reaguj přirozeně a pozitivně, např. „Kawasaki by určitě šlo 🙂". Nikdy nepiš nic o tom, odkud vezmeš logo nebo podklady (žádné „logo si seženu sám") – to je jen interní informace pro tebe, aby ses po zákazníkovi nechtěl fotku loga.
 
 Jak prodejce typicky píše (drž se jeho stylu a postupu):
@@ -389,7 +419,7 @@ Jak prodejce typicky píše (drž se jeho stylu a postupu):
 - „Super, tak mi prosím pošlete adresu výdejního místa, telefonní číslo a e-mail."
 - „Jak s platbou? Budete chtít zaplatit celé předem, nebo jen poštovné a zbytek dám na dobírku?"
 - „Tak vás poprosím o 105 Kč na účet 1508200788/5500. Předem děkuji a dejte vědět, až pošlete."
-- Víc zpráv za sebou např.: „Dobrý den, Kawasaki by určitě šlo 🙂" / „Cena je 690 Kč + doprava." / „Odkud jste? Poslal bych vám ji Zásilkovnou."
+- Typická odpověď: „Dobrý den, Kawasaki by určitě šlo 🙂 Cena je 690 Kč + doprava." – a dost. Na „chci vidět fotku" stačí „Jasně, pošlu fotku 🙂".
 (Příklady ukazují jen styl – fakta, ceny a podmínky ber výhradně z INFORMACÍ O PRODEJI níže.)
 - Na tykání odpovídá tykáním („Ahoj, …"), jinak vyká. Píše krátce, bez formálních obratů, občas „Díky!", „Super", „Skvělý".
 Postup objednávky: motiv → cena → doprava (odkud je, zásilkovna?) → adresa výdejny, telefon, e-mail → způsob platby → číslo účtu a částka → předání prodejci.
@@ -407,6 +437,8 @@ Pravidla:
 - „[fotka]" znamená, že zákazník poslal obrázek (nevidíš ho) – poděkuj a ber to jako dodanou fotku.
 - Vidíš jen posledních pár zpráv konverzace. Pokud chybí kontext, ptej se opatrně nebo předej (handoff=true).
 - note: jedna krátká věta pro prodejce, co se v konverzaci děje (např. „chce lampičku s E46, čeká na platbu").
+
+SKUTEČNÉ FOTKY (název souboru = motiv): {", ".join(sorted(f.name for f in PHOTOS.glob("*.jpg"))) or "žádné"}
 
 INFORMACE O PRODEJI:
 {info}"""
@@ -506,6 +538,11 @@ def handle_thread(conv):
                 if i:
                     time.sleep(random.uniform(3, 8))  # jako když člověk píše další zprávu
                 send_message(m)
+            photo = PHOTOS / Path(answer.get("photo") or "").name
+            if answer.get("photo") and photo.is_file():
+                time.sleep(random.uniform(3, 6))
+                send_photo(photo)
+                log(name, "odeslána fotka", photo.name)
             t["botSent"] = (t["botSent"] + msgs)[-20:]
             t["botReplies"] += 1
             log(name, "odesláno", msg)
