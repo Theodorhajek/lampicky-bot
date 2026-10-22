@@ -394,8 +394,9 @@ def read_post_comments():
             if not rest or (rest[0].get("content-desc") or rest[0].get("text")) != name or len(rest) < 2:
                 continue
             # za jménem můžou být odznaky (Moderátor, Správce, Autor, Top fanoušek…) – ty přeskočit
+            # text komentáře je vpravo od profilovky (x ≥ 100) – vlevo dole je lišta reakcí ❤️ 🙌 🔥, ta to není
             text = next(((m.get("content-desc") or m.get("text") or "").strip() for m in rest[1:]
-                         if (m.get("content-desc") or m.get("text") or "").strip() not in BADGES), "")
+                         if (m.get("content-desc") or m.get("text") or "").strip() not in BADGES and bounds(m)[0] >= 100), "")
             if not text or text.startswith(("Odpovědět", "Tlačítko")):
                 continue
             # stáří komentáře („4 h“, „5 d“, „3 T“) je hned za jménem
@@ -440,7 +441,7 @@ def _find_comment(name, text):
         _expand_comments()  # komentář může být schovaný pod „Zobrazit předchozí komentáře“
         buttons = [n for n in nodes() if n.get("class", "").endswith("Button")]
         for i, n in enumerate(buttons[:-1]):
-            if (n.get("content-desc") or n.get("text")) == name:
+            if (n.get("content-desc") or n.get("text")) == name and bounds(buttons[i + 1])[0] >= 100:
                 t = buttons[i + 1].get("content-desc") or buttons[i + 1].get("text") or ""
                 if (snippet and snippet in re.sub(r"\W+", "", t).lower()) or (not snippet and t.strip() == text.strip()):  # jen emoji
                     return bounds(buttons[i + 1])
