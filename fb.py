@@ -357,6 +357,10 @@ def open_notification(key):
     raise RuntimeError("upozornění na komentář jsem nenašel")
 
 
+BADGES = {"Moderátor", "Moderátorka", "Správce", "Správkyně", "Autor", "Autorka", "Top fanoušek", "Nejaktivnější fanoušek",
+          "Expert skupiny", "Nový člen", "Nová členka", "Admin", "Sledovat", "·"}
+
+
 def too_old(age):
     """Komentář starší než týden (nebo neznámé stáří) – na ten už bot nereaguje."""
     m = re.match(r"(\d+)\s*(\w+)", age or "")
@@ -396,7 +400,9 @@ def read_post_comments():
             rest = [m for m in all_nodes[i + 1:i + 12] if m.get("class", "").endswith("Button")]
             if not rest or (rest[0].get("content-desc") or rest[0].get("text")) != name or len(rest) < 2:
                 continue
-            text = (rest[1].get("content-desc") or rest[1].get("text") or "").strip()
+            # za jménem můžou být odznaky (Moderátor, Správce, Autor, Top fanoušek…) – ty přeskočit
+            text = next(((m.get("content-desc") or m.get("text") or "").strip() for m in rest[1:]
+                         if (m.get("content-desc") or m.get("text") or "").strip() not in BADGES), "")
             if not text or text.startswith(("Odpovědět", "Tlačítko")):
                 continue
             # stáří komentáře („4 h“, „5 d“, „3 T“) je hned za jménem
