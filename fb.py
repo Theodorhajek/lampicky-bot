@@ -64,12 +64,12 @@ def discard_composer():
 
 def home():
     """Facebook nastartovaný načisto, hlavní stránka."""
-    d.app_start(FB, stop=True)
+    d.app_start(FB, ".LoginActivity", stop=True)  # s aktivitou = bez „monkey“, který zapíná otáčení
     for _ in range(5):
         if d(description="Hledat").wait(timeout=20):  # Facebook se někdy načítá pomalu
             return
         if d.app_current().get("package") != FB:  # „zpět“ nás vyhodilo z aplikace – znovu otevřít
-            d.app_start(FB)
+            d.app_start(FB, ".LoginActivity")
             continue
         if discard_composer():
             continue
@@ -287,7 +287,12 @@ def open_notifications():
     """Karta Upozornění ve Facebooku (ověří, že se opravdu otevřela)."""
     home()
     for _ in range(3):
-        d(descriptionStartsWith="Upozornění, karta").click()
+        tab = d(descriptionStartsWith="Upozornění, karta")
+        if not tab.wait(timeout=10):
+            d.press("back")  # něco zakrývá spodní lištu
+            time.sleep(2)
+            continue
+        tab.click()
         time.sleep(5)
         if d(description="Spravovat nastavení upozornění").exists or d(descriptionStartsWith="Spravovat nastavení").exists:
             return
@@ -490,10 +495,14 @@ def message_commenter(name, text, message):
     x1, y1, x2, y2 = bounds(target)
     d.click((x1 + x2) // 2, (y1 + y2) // 2)
     time.sleep(7)
-    for label in ("Zpráva", "Poslat zprávu", "Napsat zprávu"):
-        if d(description=label).exists or d(text=label).exists:
+    for _ in range(4):  # profil se někdy otevře na šířku a tlačítko je až níž
+        label = next((lb for lb in ("Zpráva", "Poslat zprávu", "Napsat zprávu") if d(description=lb).exists or d(text=lb).exists), None)
+        if label:
             click_desc(label)
             break
+        w, h = d.window_size()
+        d.swipe(w // 2, int(h * 0.8), w // 2, int(h * 0.35), 0.3)
+        time.sleep(2)
     else:
         raise RuntimeError(f"na profilu {name} není tlačítko Zpráva")
     time.sleep(8)
@@ -502,6 +511,11 @@ def message_commenter(name, text, message):
     if any("poklepáním zobrazíte datum" in t or t.startswith(("Odesláno", "Zobrazeno")) for t in texts):
         d.press("back")
         return "existing"  # s člověkem už konverzace je – nic nového nepsat, ať to není divné
+    for label in ("Pokračovat",):  # „V chatu nemůžete posílat zprávy. Otevřete chat…“ → Pokračovat
+        sel = d(description=label) if d(description=label).exists else d(text=label)
+        if sel.exists:
+            sel.click()
+            time.sleep(6)
     box = d(className="android.widget.EditText")
     if not box.wait(timeout=10):
         raise RuntimeError("v chatu chybí pole pro zprávu")

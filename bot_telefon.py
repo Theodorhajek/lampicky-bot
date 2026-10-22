@@ -79,6 +79,14 @@ def connect():
     global d
     d = u2.connect()
     d.screen_on()
+    # vždy na výšku – když telefon leží na boku a otočí se, nesedí rozložení obrazovky
+    d.shell("settings put system accelerometer_rotation 0")
+    d.shell("settings put system user_rotation 0")
+    try:
+        d.set_orientation("natural")
+        d.freeze_rotation(True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def nodes():
@@ -175,7 +183,7 @@ def go_home():
 def _go_home():
     wake()
     if d.app_current().get("package") != PKG:
-        d.app_start(PKG)
+        d.app_start(PKG, ".auth.StartScreenActivity")  # s aktivitou = bez „monkey“, který zapíná otáčení
         time.sleep(5)
     for _ in range(5):
         if d(descriptionStartsWith="Chaty, ").exists and not d(className="android.widget.EditText").exists:
@@ -185,7 +193,7 @@ def _go_home():
         d.press("back")
         time.sleep(1)
         if d.app_current().get("package") != PKG:
-            d.app_start(PKG)
+            d.app_start(PKG, ".auth.StartScreenActivity")  # s aktivitou = bez „monkey“, který zapíná otáčení
             time.sleep(5)
     tap_desc("Chaty, ")
     tap_desc("Chaty, ")  # druhé klepnutí odroluje seznam nahoru
@@ -590,7 +598,7 @@ def check_comments():
                 merged[c["name"]].setdefault("also", []).append(f"{c['name']}|{c['text'][:80]}")
             else:
                 merged[c["name"]] = dict(c, first=c["text"])
-        dms = []
+        dms, failed = [], False
         for c in merged.values():
             name, ckey = c["name"], f"{c['name']}|{c['first'][:80]}"
             item = {"name": name, "text": c["text"], "reply": notif["reply"], "group": notif["group"], "key": notif["key"]}
@@ -614,10 +622,11 @@ def check_comments():
                 log(name, "komentář – odpověděl jsem", f"„{c['text']}“ → {reply}")
                 time.sleep(random.uniform(10, 30))
             except Exception as e:  # noqa: BLE001
+                failed = True  # upozornění neoznačit jako vyřízené – příště se komentář zkusí znovu
                 comment_error(name, c["text"], e)
         retry = state.setdefault("dmRetry", [])
         retry += [{"key": notif["key"], "name": c["name"], "first": c["first"], "dm": dm, "tries": 0} for c, dm in dms]
-        if SEND:
+        if SEND and not failed:
             seen[notif["key"]] = datetime.now().strftime("%d. %m. %H:%M")
             save_state()
     send_comment_dms(fb)
