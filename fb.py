@@ -436,7 +436,7 @@ def _find_comment(name, text):
         for i, n in enumerate(buttons[:-1]):
             if (n.get("content-desc") or n.get("text")) == name:
                 t = buttons[i + 1].get("content-desc") or buttons[i + 1].get("text") or ""
-                if snippet and snippet in re.sub(r"\W+", "", t).lower():
+                if (snippet and snippet in re.sub(r"\W+", "", t).lower()) or (not snippet and t.strip() == text.strip()):  # jen emoji
                     return bounds(buttons[i + 1])
         d.swipe(540, 1700, 540, 1000, 0.3)
         time.sleep(2)
