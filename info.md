@@ -19,6 +19,7 @@
 1. Celé předem převodem: 690 Kč + doprava 85 Kč = 775 Kč
 2. Na dobírku: dopravu 105 Kč zaplatí předem převodem, lampičku (690 Kč) pak při převzetí. Celkem 795 Kč.
 - Číslo účtu: 1508200788/5500 (do zprávy pro příjemce ať napíše své jméno)
+- Posíláme kamkoliv v ČR i na Slovensko (to je samozřejmé, zákazníkovi to nepotvrzuj zvlášť)
 - Dopravce: Zásilkovna nebo PPL – na výdejní místo i na adresu, cena dopravy je u všech stejná
 - Pro odeslání potřebuju: jméno, telefon, e-mail, dopravce (Zásilkovna / PPL) a adresu, nebo adresu výdejního místa
 - Osobní předání není možné – posílám jen přes Zásilkovnu nebo PPL.
