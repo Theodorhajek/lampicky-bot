@@ -275,7 +275,7 @@ PHOTO = re.compile(r"(fotka|fotku|obrázek|video).*odeslal\(a\) (.+?) v ", re.I)
 
 
 DATE = re.compile(r"^(\d{1,2}\. ?\d{1,2}\.|\d{1,2}:\d{2}$|(Po|Út|St|Čt|Pá|So|Ne)\b|Dnes|Včera|.*\bV \d{1,2}:\d{2}$)")
-SYSTEM_TEXT = re.compile(r"koncovým šifrováním|Na Facebooku jste přáteli|Zobrazit profil|Nový Facebook profil|^Žije v ")
+SYSTEM_TEXT = re.compile(r"koncovým šifrováním|Teď už si můžete|Na Facebooku jste přáteli|Zobrazit profil|Nový Facebook profil|^Žije v ")
 
 
 def read_messages():
