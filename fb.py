@@ -452,6 +452,10 @@ def _find_comment(name, text):
 def reply_to_comment(name, text, reply):
     """Na otevřeném příspěvku odpoví pod komentářem daného člověka."""
     b = _find_comment(name, text)
+    if b and b[3] > 1700:  # komentář u spodního okraje – posunout, ať je vidět i tlačítko Odpovědět
+        d.swipe(540, 1500, 540, 900, 0.3)
+        time.sleep(2)
+        b = _find_comment(name, text)
     if not b:
         raise RuntimeError(f"komentář od {name} jsem na příspěvku nenašel")
     best = None  # tlačítko Odpovědět nejblíž pod komentářem
