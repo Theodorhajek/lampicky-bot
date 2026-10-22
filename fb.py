@@ -377,14 +377,7 @@ def read_post_comments():
     d(descriptionStartsWith="Profilový obrázek").wait(timeout=15)  # komentáře se načítají se zpožděním
     time.sleep(2)
     for _ in range(8):
-        for sel in (d(descriptionStartsWith="Zobrazit další komentáře"), d(descriptionStartsWith="Zobrazit předchozí komentáře"),
-                    d(descriptionMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*"),
-                    d(textMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*")):
-            for _k in range(10):  # rozbalit všechny skryté komentáře a odpovědi (jinak by bot nepoznal, že už jsi odpověděl)
-                if not sel.exists:
-                    break
-                sel.click()
-                time.sleep(3)
+        _expand_comments()
         all_nodes = nodes()
         for n in all_nodes:  # „Zobrazit 1 odpověď Filip Baldrych…“, co se nerozbalilo → komentář má odpověď
             m = re.match(r"Zobrazit .*?odpově\w* (.+?)…?$", n.get("content-desc") or "")
@@ -428,10 +421,23 @@ def read_post_comments():
     return found
 
 
+def _expand_comments():
+    """Rozbalí skryté komentáře a odpovědi, které jsou právě na obrazovce."""
+    for sel in (d(descriptionStartsWith="Zobrazit další komentáře"), d(descriptionStartsWith="Zobrazit předchozí komentáře"),
+                d(descriptionMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*"),
+                d(textMatches=r"(?i)^Zobrazit( všech)? \d* ?(odpověď|odpovědi|odpovědí).*")):
+        for _k in range(10):  # rozbalit všechny skryté komentáře a odpovědi (jinak by bot nepoznal, že už jsi odpověděl)
+            if not sel.exists:
+                break
+            sel.click()
+            time.sleep(3)
+
+
 def _find_comment(name, text):
     """Na otevřeném příspěvku najde komentář (tlačítko se jménem a hned za ním tlačítko s textem), vrací bounds textu."""
     snippet = re.sub(r"\W+", "", text[:25]).lower()
-    for _ in range(8):
+    for _ in range(10):
+        _expand_comments()  # komentář může být schovaný pod „Zobrazit předchozí komentáře“
         buttons = [n for n in nodes() if n.get("class", "").endswith("Button")]
         for i, n in enumerate(buttons[:-1]):
             if (n.get("content-desc") or n.get("text")) == name:
