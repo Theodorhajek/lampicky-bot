@@ -81,8 +81,14 @@ def home():
 def open_group(name, members):
     """Najde skupinu přes hledání (jméno + počet členů, např. „13“ z „13 tis.“) a otevře ji."""
     home()
-    d(descriptionMatches="^(Hledat|Search)$").click()
-    time.sleep(3)
+    for _ in range(3):  # klepnutí na lupu občas nezabere (stránka se ještě načítá)
+        d(descriptionMatches="^(Hledat|Search)$").click()
+        if d(className="android.widget.EditText").wait(timeout=8):
+            break
+        time.sleep(2)
+    else:
+        raise RuntimeError("Facebook: neotevřelo se hledání")
+    time.sleep(1)
     d(className="android.widget.EditText").set_text(name)
     time.sleep(1)
     d.press("enter")
