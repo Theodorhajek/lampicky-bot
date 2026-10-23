@@ -81,8 +81,12 @@ def home():
 def open_group(name, members):
     """Najde skupinu přes hledání (jméno + počet členů, např. „13“ z „13 tis.“) a otevře ji."""
     home()
-    for _ in range(3):  # klepnutí na lupu občas nezabere (stránka se ještě načítá)
-        d(descriptionMatches="^(Hledat|Search)$").click()
+    for _ in range(3):  # klepnutí na lupu občas nezabere (stránka se ještě načítá / zrovna se překresluje)
+        try:
+            d(descriptionMatches="^(Hledat|Search)$").click()
+        except Exception:  # noqa: BLE001  – StaleObjectException: prvek se mezitím překreslil
+            time.sleep(2)
+            continue
         if d(className="android.widget.EditText").wait(timeout=8):
             break
         time.sleep(2)
