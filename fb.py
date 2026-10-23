@@ -475,7 +475,8 @@ def reply_to_comment(name, text, reply):
     d.click((x1 + x2) // 2, (y1 + y2) // 2)
     time.sleep(3)
     _type_into_box(reply)
-    if not d(descriptionStartsWith="Odpovídáte uživateli").exists and not d(textStartsWith="Odpovídáte uživateli").exists:
+    in_thread = d(textStartsWith="Odpovědi na komentář").exists or d(descriptionStartsWith="Odpovědi na komentář").exists
+    if not in_thread and not d(descriptionStartsWith="Odpovídáte uživateli").exists and not d(textStartsWith="Odpovídáte uživateli").exists:
         raise RuntimeError("Facebook: nejsem v režimu odpovědi na komentář – neodesílám")
     click_desc("Odeslat")
     time.sleep(5)
