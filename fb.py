@@ -66,7 +66,7 @@ def home():
     """Facebook nastartovaný načisto, hlavní stránka."""
     d.app_start(FB, ".LoginActivity", stop=True)  # s aktivitou = bez „monkey“, který zapíná otáčení
     for _ in range(5):
-        if d(description="Hledat").wait(timeout=20):  # Facebook se někdy načítá pomalu
+        if d(descriptionMatches="^(Hledat|Search)$").wait(timeout=20):  # FB se někdy načítá pomalu; občas je anglicky
             return
         if d.app_current().get("package") != FB:  # „zpět“ nás vyhodilo z aplikace – znovu otevřít
             d.app_start(FB, ".LoginActivity")
@@ -81,7 +81,7 @@ def home():
 def open_group(name, members):
     """Najde skupinu přes hledání (jméno + počet členů, např. „13“ z „13 tis.“) a otevře ji."""
     home()
-    click_desc("Hledat")
+    d(descriptionMatches="^(Hledat|Search)$").click()
     time.sleep(3)
     d(className="android.widget.EditText").set_text(name)
     time.sleep(1)
@@ -259,7 +259,8 @@ def join_or_post(group, members, photos, text, answerer=None):
     publish()
     shot = screenshot("zverejneno")
     descs = " | ".join((n.get("content-desc") or n.get("text") or "") for n in nodes())
-    return ("posted-pending" if "Ke schválení" in descs or "odpovědí se správci" in descs else "posted"), shot
+    pending = re.search(r"ke schválení|správcům|odpovědí se správci|pending|admin", descs, re.I)
+    return ("posted-pending" if pending else "posted"), shot
 
 
 def post(group, members, photo, text, only_prepare=False):
@@ -276,6 +277,7 @@ def post(group, members, photo, text, only_prepare=False):
 # ---------- komentáře pod mými příspěvky ----------
 
 ME = "Martin Hejduk"
+DEBUG = False
 # „Václav Kadavý okomentoval váš příspěvek ve skupině Motorkáři CZ/SK.. 5 d. Nepřečteno“
 # „Jaroslav Strakoš s 5 dalšími okomentovali váš příspěvek ve skupině …“, „X odpověděl(a) na váš komentář …: „text““
 COMMENT_RE = re.compile(r"^(?P<name>.+?) (?:s \d+ dalšími |a \d+ dalších )?(?P<kind>okomentoval\w*(?:\(a\))?|odpověděl\w*(?:\(a\))?)"
@@ -338,7 +340,7 @@ def _more_notifications():
 def open_notification(key):
     """Otevře kartu Upozornění, najde upozornění podle klíče (posouvá dolů) a otevře ho."""
     open_notifications()
-    for _ in range(14):
+    for _ in range(26):
         match = next((i for i in comment_notifications() if i["key"] == key), None)
         if match and 250 < match["bounds"][1] and match["bounds"][3] < 2050:  # celé vidět (ne pod spodní lištou)
             x1, y1, x2, y2 = match["bounds"]
@@ -379,19 +381,23 @@ def read_post_comments():
     found, collapsed = [], set()
     d(descriptionStartsWith="Profilový obrázek").wait(timeout=15)  # komentáře se načítají se zpožděním
     time.sleep(2)
-    for _ in range(8):
-        _expand_comments()
+    idle = 0
+    for _ in range(14):
+        _expand_comments()  # rozbalit na téhle obrazovce a hned ji přečíst (po posunu FB odpovědi zase sbalí)
+        time.sleep(1)
         all_nodes = nodes()
         for n in all_nodes:  # „Zobrazit 1 odpověď Filip Baldrych…“, co se nerozbalilo → komentář má odpověď
             m = re.match(r"Zobrazit .*?odpově\w* (.+?)…?$", n.get("content-desc") or "")
             if m:
                 collapsed.add(m.group(1).strip())
-        new = 0
+        screen = []  # komentáře na téhle obrazovce, shora dolů
         for i, n in enumerate(all_nodes):
             desc = n.get("content-desc") or ""
             if not (n.get("class", "").endswith("ImageView") and desc.startswith("Profilový obrázek ")):
                 continue
             name, x1 = desc[len("Profilový obrázek "):].split(",")[0].strip(), bounds(n)[0]  # „…, nezobrazený příběh“
+            if bounds(n)[1] > 1900:
+                continue  # u spodního okraje je komentář vidět jen napůl – přečte se na další obrazovce
             # za fotkou: tlačítko se jménem, pak tlačítko s textem komentáře
             rest = [m for m in all_nodes[i + 1:i + 12] if m.get("class", "").endswith("Button")]
             if not rest or (rest[0].get("content-desc") or rest[0].get("text")) != name or len(rest) < 2:
@@ -405,24 +411,58 @@ def read_post_comments():
             # stáří komentáře („4 h“, „5 d“, „3 T“) je hned za jménem
             age = next(((m.get("content-desc") or m.get("text") or "").strip() for m in all_nodes[i + 1:i + 8]
                         if re.fullmatch(r"\d+\s*(s|m|min|h|d|T|t|r)\.?", (m.get("content-desc") or m.get("text") or "").strip())), "")
-            item = {"name": name, "text": text, "indent": x1 > 60, "answered": False, "age": age}
-            if not any(f["name"] == name and f["text"] == text for f in found):
-                found.append(item)
-                new += 1
-        if not new and d(descriptionStartsWith="Napište veřejný komentář").exists and _ > 0:
+            screen.append({"name": name, "text": text, "indent": x1 > 60, "answered": False, "age": age, "y": bounds(n)[1]})
+        screen.sort(key=lambda c: c["y"])
+        if DEBUG:
+            print("  obrazovka:", [(c["name"].split()[0], c["text"][:15], c["indent"]) for c in screen])
+        new = _merge_screen(found, screen)
+        idle = 0 if new else idle + 1
+        if idle >= 2:
             break
         d.swipe(540, 1700, 540, 900, 0.3)
         time.sleep(2)
-    for i, c in enumerate(found):  # odpovědi (odsazené) patří k předchozímu komentáři
-        if c["name"] in collapsed:
-            c["answered"] = True
-        if not c["indent"]:
-            j = i + 1
-            while j < len(found) and found[j]["indent"]:
-                if found[j]["name"] == ME:
-                    c["answered"] = True
-                j += 1
+    for i, c in enumerate(found):
+        c.pop("y", None)
+        if not c["indent"] and c["name"] in collapsed:
+            c["answered"] = True  # nerozbalené odpovědi – radši brát jako zodpovězené
+        # odpověděl Martin někde POD tímhle komentářem (ve stejném vlákně)?
+        j = i + 1
+        while j < len(found) and found[j]["indent"]:
+            if found[j]["name"] == ME:
+                c["answered"] = True
+            j += 1
+        if c["indent"]:
+            c["toMe"] = c["text"].startswith(ME) or _thread_owner(found, i) == c["name"] and _martin_in_thread(found, i)
     return found
+
+
+def _thread_owner(found, i):
+    while i > 0 and found[i]["indent"]:
+        i -= 1
+    return found[i]["name"]
+
+
+def _martin_in_thread(found, i):
+    k = i
+    while k > 0 and found[k]["indent"]:
+        k -= 1
+        if found[k]["name"] == ME:
+            return True
+    return False
+
+
+def _merge_screen(found, screen):
+    """Připojí komentáře z nové obrazovky k už přečteným podle překryvu (stejné komentáře nahoře nové obrazovky
+    = konec předchozí). Neslučuje podle textu, protože stejný text („Cena?“) může mít víc lidí. Vrací počet nových."""
+    key = lambda c: (c["name"], c["text"], c["indent"])
+    for k in range(min(len(found), len(screen)), 0, -1):
+        if [key(c) for c in found[-k:]] == [key(c) for c in screen[:k]]:
+            found.extend(screen[k:])
+            return len(screen) - k
+    # bez překryvu: přeskočit, co už je na konci (obrazovka se neposunula)
+    fresh = [c for c in screen if key(c) not in {key(f) for f in found[-len(screen):]}] if found else screen
+    found.extend(fresh)
+    return len(fresh)
 
 
 def _expand_comments():

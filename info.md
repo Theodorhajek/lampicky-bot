@@ -8,7 +8,9 @@
 - Od zákazníka potřebuju: fotku nebo logo toho, co chce na lampičce (u auta ideálně ostrou fotku z boku, celé auto v záběru)
 - Cena: 690 Kč + doprava
 - Víc kusů: 690 Kč za každý kus, bez slevy (2 kusy = 1380 Kč, 3 kusy = 2070 Kč). Doprava se platí jednou za celou zásilku. Tohle klidně rovnou napiš, nepředávej.
-- Materiál: akrylové sklo s gravírovaným motivem na bukovém (dřevěném) podstavci
+- Materiál: akrylové sklo s gravírovaným motivem na podstavci z buku (dřevo)
+- Síla světla: je to ambientní / dekorativní světlo – v noci se dá použít jako ambientní světlo, ale na čtení to určitě není
+- K motivu jde přidat i jméno nebo nápis. Jestli se za to připlácí, nevíš – na cenu za jméno navíc se zeptej prodejce (handoff).
 - Rozměr skla: 15 × 15 cm
 - Napájení: USB kabel. Varianta na baterky / s baterií bohužel není – když se někdo ptá, napiš, že bohužel ne (jen přes USB).
 - Barva světla: na lampičce je přepínač, dá se přepínat mezi různými barvami

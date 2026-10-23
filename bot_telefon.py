@@ -29,6 +29,8 @@ os.environ["PATH"] = f"{ADB_DIR}{os.pathsep}{os.environ['PATH']}"
 
 import uiautomator2 as u2  # noqa: E402  (až po nastavení PATH k adb)
 
+import data  # noqa: E402  (databáze zpráv, komentářů a rozhodnutí – data/lampicky.db)
+
 CONFIG = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
 MODE = sys.argv[1] if len(sys.argv) > 1 else "run"
 SEND = MODE == "run"
@@ -403,6 +405,7 @@ REPLY_SCHEMA = {
 
 def system_prompt():
     info = (HERE / "info.md").read_text(encoding="utf-8")
+    lessons = "\n".join(l for l in (HERE / "lekce.md").read_text(encoding="utf-8").splitlines() if l.startswith("- "))
     return f"""Odpovídáš v Messengeru za prodejce ručně dělaných lampiček na zakázku (auta, motorky, loga, cokoliv podle fotky). Zákazníci píšou většinou z Facebook skupin, kde viděli jeho příspěvek.
 
 Píšeš za něj, v první osobě, česky. Vykáš (prodejce píše zákazníkům „Zdravím“, „Dobrý den“, „dejte vědět“). Když zákazník tyká nebo začne „Ahoj“, tykej mu taky (a pozdrav „Ahoj“). Piš úsporně jako člověk na mobilu, ne jako robot ani e-mail. Většinou JEDNA krátká zpráva (pole messages), druhou přidej jen když je opravdu potřeba (nejvýš 2). Každá zpráva max. jedna krátká věta. Čím kratší, tím lepší. Žádné slohovky, odrážky ani formální fráze. Z emoji jen 🙂 (nejvýš jednou), žádné jiné.
@@ -438,6 +441,12 @@ Pravidla:
 - „[fotka]" znamená, že zákazník poslal obrázek (nevidíš ho) – poděkuj a ber to jako dodanou fotku.
 - Vidíš jen posledních pár zpráv konverzace. Pokud chybí kontext, ptej se opatrně nebo předej (handoff=true).
 - note: jedna krátká věta pro prodejce, co se v konverzaci děje (např. „chce lampičku s E46, čeká na platbu").
+
+LEKCE Z OPRAV PRODEJCE (mají přednost před vším ostatním):
+{lessons}
+
+JAK ODPOVÍDAL PRODEJCE SÁM (skutečné ruční odpovědi – napodob styl a délku):
+{data.manual_examples() or "zatím žádné"}
 
 SKUTEČNÉ FOTKY (název souboru = motiv): {", ".join(sorted(f.name for f in PHOTOS.glob("*.jpg"))) or "žádné"}
 
@@ -491,6 +500,10 @@ def handle_thread(conv):
     if not messages:
         log(name, "nepřečetl jsem zprávy", "zkontroluj `debug`")
         return
+    try:
+        data.save_conversation(name, messages, t["botSent"])
+    except Exception as e:  # noqa: BLE001  – databáze nikdy nesmí shodit bota
+        print("  (databáze:", e, ")", flush=True)
     last = messages[-1]
 
     if last["from"] == "me":
@@ -519,6 +532,10 @@ def handle_thread(conv):
         return
 
     answer = ask_claude(name, messages, conv.get("late", False))
+    try:
+        data.save_decision("messenger", name, transcript(messages[-10:]), answer, answer.get("handoff"), answer.get("note", ""))
+    except Exception:  # noqa: BLE001
+        pass
     t["handled"] = norm(transcript(messages[-5:]))
     msgs = [m.strip() for m in answer.get("messages") or [answer.get("message") or ""] if m.strip()]
     msg = " / ".join(msgs)
@@ -577,7 +594,7 @@ CÍL: dostat zájemce do soukromých zpráv. V komentářích se nic nedomlouvá
 Dostaneš jeden komentář (nebo odpověď na můj komentář). Vrať:
 - comment_reply: krátká veřejná odpověď pod komentář (nebo "" = neodpovídat). Tykej (ve skupinách se tyká), pokud dotyčný nevyká. Max 1 krátká věta. Emoji jen 🙂 (nebo žádné), nikdy jiné. Obměňuj, ať to nevypadá jako robot, např. „Napiš mi zprávu a domluvíme se 🙂“, „Napiš SZ a domluvíme se“, „Pošli zprávu, domluvíme se 🙂“, „Klidně napiš do zpráv 🙂“.
 - send_dm: true, pokud má člověk o lampičku zájem (ptá se na cenu, chce ji, ptá se kde koupit, na jiný motiv…). Pak mu prodejce rovnou napíše do Messengeru, aby tam měl zprávu, až chat otevře.
-- dm: úvodní zpráva do Messengeru (když send_dm). Tykej, 1–2 krátké věty, přátelsky, jako člověk, emoji jen 🙂: např. „Ahoj, lampička stojí 690 Kč + doprava 🙂 Jakou bys chtěl?“ Když se ptá na něco konkrétního (barva, motiv, rozměr – sklo 15 × 15 cm, barvy světla se přepínají), odpověz na to krátce. Nepiš, odkud vezmeš logo. Nepiš, že ses dozvěděl z komentáře robotem apod.
+- dm: úvodní zpráva do Messengeru (když send_dm). Tykej, KRÁTCE – jedna věta + nejvýš jedna otázka, emoji jen 🙂: např. „Ahoj, lampička stojí 690 Kč + doprava 🙂 Jakou bys chtěl?“ Nevyjmenovávej dopravce ani parametry, pokud se na ně neptal. Když se ptá na něco konkrétního (barva, motiv, rozměr – sklo 15 × 15 cm, barvy světla se přepínají), odpověz na to krátce. Nepiš, odkud vezmeš logo. Nepiš, že ses dozvěděl z komentáře robotem apod.
 - note: krátce pro prodejce, co se stalo.
 
 PRAVIDLA:
@@ -585,6 +602,8 @@ PRAVIDLA:
 - Jen když je někdo naštvaný nebo trvá na tom, ať je cena veřejně v komentářích (např. „napiš sem cenu, ať se každý nemusí ptát"): comment_reply přesně ve stylu „690, napiš zprávu 🙂" – jen číslo 690, NIC o dopravě ani dalším. send_dm=true.
 - V komentáři NIKDY nepiš, že jsi mu už napsal / poslal zprávu / „mrkni do zpráv".
 - Pochvala („pěkné", „super", „super“): krátké poděkování („Díky! 🙂") nebo nic; send_dm=false.
+- Odpověď ve vlákně, kde člověk jen oznamuje (např. „jsem v Norsku do listopadu", „ozvu se"): krátce „OK, ozvi se pak 🙂", send_dm=false.
+- Odpovědi musí být krátké, jako od člověka na mobilu.
 - Označení kamaráda bez dalšího textu: nic, send_dm=false.
 - Dotaz na autorská práva / licenci / povolení k logu: comment_reply="", send_dm=false.
 - Hejt, trolling, spam, nesouvisející: comment_reply="", send_dm=false.
@@ -593,6 +612,8 @@ PRAVIDLA:
 
 def ask_claude_comment(item):
     kind = "Odpověď na můj komentář" if item["reply"] else "Komentář pod mým příspěvkem"
+    if item.get("thread"):
+        kind += f" (celé vlákno, nejstarší nahoře):\n{item['thread']}\n\nOdpovídáš na poslední"
     prompt = (f"{kind} od {item['name']}: „{item['text']}“\n(skupina: {item.get('group') or '?'};"
               f" můj příspěvek: ručně dělané LED lampičky s gravírovaným motivem)")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
@@ -627,7 +648,8 @@ def check_comments():
             log(notif["group"] or "komentáře", "pod příspěvkem jsem nic nenačetl, zkusím příště", notif["key"])
             continue
         comments = [c for c in all_comments
-                    if c["name"] != fb.ME and not c["answered"] and not fb.too_old(c.get("age")) and c["indent"] == notif["reply"]
+                    if c["name"] != fb.ME and not c["answered"] and not fb.too_old(c.get("age"))
+                    and (not c["indent"] or c.get("toMe"))  # komentáře + odpovědi určené Martinovi
                     and f"{c['name']}|{c['text'][:80]}" not in done]
         merged = {}  # víc komentářů od jednoho člověka = jedna odpověď a jedna zpráva
         for c in comments:
@@ -639,10 +661,16 @@ def check_comments():
         dms, failed = [], False
         for c in merged.values():
             name, ckey = c["name"], f"{c['name']}|{c['first'][:80]}"
-            item = {"name": name, "text": c["text"], "reply": notif["reply"], "group": notif["group"], "key": notif["key"]}
+            item = {"name": name, "text": c["text"], "reply": c["indent"], "group": notif["group"], "key": notif["key"],
+                    "thread": thread_context(all_comments, c)}
             try:
                 answer = ask_claude_comment(item)
                 reply, dm = answer["comment_reply"].strip(), answer["dm"].strip()
+                try:
+                    data.save_comment(notif["group"], name, c["text"], c["indent"], reply, dm if answer["send_dm"] else "", answer.get("note", ""))
+                    data.save_decision("comment", name, item.get("thread") or c["text"], answer, False, answer.get("note", ""))
+                except Exception:  # noqa: BLE001
+                    pass
                 mark = lambda: [done.__setitem__(k, answer.get("note", "")) for k in [ckey] + c.get("also", [])] and save_state()
                 if not SEND:
                     log(name, "KOMENTÁŘ – NÁVRH (neodesláno)", f"„{c['text']}“ → {reply or '—'} | DM: {dm if answer['send_dm'] else '—'}")
@@ -661,6 +689,8 @@ def check_comments():
                 time.sleep(random.uniform(10, 30))
             except Exception as e:  # noqa: BLE001
                 failed = True  # upozornění neoznačit jako vyřízené – příště se komentář zkusí znovu
+                if is_connection_error(e):
+                    raise
                 comment_error(name, c["text"], e)
         retry = state.setdefault("dmRetry", [])
         retry += [{"key": notif["key"], "name": c["name"], "first": c["first"], "dm": dm, "tries": 0} for c, dm in dms]
@@ -692,6 +722,8 @@ def send_comment_dms(fb):
                 t["botReplies"] += 1
                 log(name, "komentář – poslal jsem zprávu", job["dm"])
         except Exception as e:  # noqa: BLE001
+            if is_connection_error(e):
+                raise
             job["tries"] += 1
             if job["tries"] >= 3:
                 retry.remove(job)
@@ -699,6 +731,18 @@ def send_comment_dms(fb):
             else:
                 log(name, f"zpráva z komentáře nevyšla ({job['tries']}×), zkusím příště", str(e))
         save_state()
+
+
+def thread_context(all_comments, c):
+    """Celé vlákno, do kterého komentář patří (původní komentář + odpovědi až po tenhle), pro Clauda."""
+    i = next((k for k, x in enumerate(all_comments) if x is c or (x["name"], x["text"]) == (c["name"], c.get("first", c["text"]))), None)
+    if i is None or not c["indent"]:
+        return ""
+    start = i
+    while start > 0 and all_comments[start]["indent"]:
+        start -= 1
+    return "\n".join(f"{'  ' if x['indent'] else ''}{'Já' if x['name'] == 'Martin Hejduk' else x['name']}: {x['text']}"
+                     for x in all_comments[start:i + 1])
 
 
 def comment_error(name, text, e):
@@ -781,6 +825,8 @@ def run_queue():
         status, shot = fb.join_or_post(job["group"], job["members"], [str(HERE / p) for p in job.get("photos") or [job["photo"]]], job["text"],
                                        answerer=answer_group_questions)
     except Exception as e:  # noqa: BLE001
+        if is_connection_error(e):
+            raise  # výpadek telefonu – příspěvek se zkusí znovu, nepočítá se jako nepovedený pokus
         status, shot = "chyba", None
         zasek(f"Facebook – příspěvek do skupiny", f"{job['group']}: {e}", e)  # dřív, než se příspěvek zahodí
         job["error"] = str(e)
@@ -850,6 +896,9 @@ def check_list(source, opener):
         try:
             handle_thread(c)
         except Exception as e:  # noqa: BLE001
+            if is_connection_error(e):
+                t["preview"] = ""
+                raise  # výpadek telefonu není chyba konverzace – vyřeší hlavní smyčka
             t["errors"] = t.get("errors", 0) + 1
             log(c["name"], "CHYBA", str(e))
             zasek("Messenger – chyba v konverzaci", str(e), e)
@@ -935,6 +984,15 @@ def main():
             failures = 0
             time.sleep(CONFIG.get("notificationCheckSeconds", 20))
         except Exception as e:  # noqa: BLE001
+            if is_connection_error(e) and wait_for_phone(120):
+                # krátký výpadek USB / restart uiautomatoru – telefon je zpátky, pokračovat hned
+                print(f"[{datetime.now():%H:%M:%S}] telefon byl chvíli odpojený, pokračuju", flush=True)
+                try:
+                    connect()
+                    leave_app()
+                    continue
+                except Exception:  # noqa: BLE001
+                    pass
             failures += 1
             wait = min(60 * 2 ** (failures - 1), 30 * 60)  # 1, 2, 4… max 30 min – žádné zběsilé opakování
             report_error(e, failures, wait)
@@ -944,6 +1002,23 @@ def main():
                 leave_app()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def is_connection_error(e):
+    text = f"{type(e).__name__} {e}"
+    return any(x in text for x in ("not found", "RemoteDisconnected", "Connection", "offline", "AdbError", "not online"))
+
+
+def wait_for_phone(seconds):
+    """Počká, až se telefon znovu objeví v adb (krátké výpadky USB). True = je zpátky."""
+    end = time.time() + seconds
+    while time.time() < end:
+        out = subprocess.run(["adb", "devices"], capture_output=True, text=True).stdout
+        if re.search(r"^\S+\s+device$", out, re.M):
+            time.sleep(3)
+            return True
+        time.sleep(3)
+    return False
 
 
 def in_quiet_hours():

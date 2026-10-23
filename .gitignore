@@ -18,3 +18,5 @@ konverzace*.json
 .env
 *.key
 .gemini_key
+audit_komentare.json
+data/
