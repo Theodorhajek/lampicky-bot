@@ -97,19 +97,57 @@ def open_group(name, members):
     time.sleep(1)
     d.press("enter")
     time.sleep(6)
-    d(descriptionStartsWith="Výsledky vyhledávání pro Skupiny").click()
+    tab = d(descriptionMatches="^(Výsledky vyhledávání pro Skupiny|Search results for Groups).*")
+    if tab.wait(timeout=10):
+        tab.click()
     time.sleep(6)
+    # rozhoduje název; počet členů se mění („42 tis.“ → „42,1 tis.“), takže jen pomáhá vybrat mezi stejnými názvy
+    want = (re.match(r"\d+", members or "") or [""])[0]
+    fallback = None
     for _ in range(6):
         for n in nodes():
             t = (n.get("content-desc") or "").replace("\xa0", " ")
             x1, y1, x2, y2 = bounds(n)
-            if n.get("class", "").endswith("Button") and t.startswith(name + ",") and members in t and y2 - y1 > 100:
+            if not (n.get("class", "").endswith("Button") and t.startswith(name + ",") and y2 - y1 > 100):
+                continue
+            count = re.search(r"·\s*([\d\s,]+)", t)
+            if want and count and count.group(1).strip().startswith(want):
                 d.click(540, (y1 + y2) // 2)
                 time.sleep(7)
                 return
+            fallback = fallback or (y1 + y2) // 2
+        if fallback:
+            d.click(540, fallback)
+            time.sleep(7)
+            return
         d.swipe(540, 1900, 540, 700, 0.3)
         time.sleep(3)
-    raise RuntimeError(f"Facebook: skupinu „{name}“ jsem nenašel")
+    open_my_group(name)  # skupiny, kde už jsem členem, hledání často neukáže – zkusit seznam „Vaše skupiny“
+
+
+def open_my_group(name):
+    """Nabídka → Skupiny → Vaše skupiny → najde skupinu podle přesného názvu (posouvá) a otevře ji."""
+    home()
+    d(descriptionMatches="^(Nabídka|Menu)$").click()
+    time.sleep(3)
+    if not d(descriptionStartsWith="Skupiny, ").exists and d(description="Zobrazit další").exists:
+        d(description="Zobrazit další").click()
+        time.sleep(2)
+    d(descriptionStartsWith="Skupiny, ").click()
+    time.sleep(5)
+    d(descriptionStartsWith="Vaše skupiny, ").click()
+    time.sleep(5)
+    for _ in range(20):
+        for n in nodes():
+            t = (n.get("content-desc") or n.get("text") or "").replace("\xa0", " ").strip()
+            if t == name and n.get("class", "").endswith(("Button", "ViewGroup")):
+                x1, y1, x2, y2 = bounds(n)
+                d.click((x1 + x2) // 2, (y1 + y2) // 2)
+                time.sleep(7)
+                return
+        d.swipe(540, 1800, 540, 900, 0.3)
+        time.sleep(2)
+    raise RuntimeError(f"Facebook: skupinu „{name}“ jsem nenašel (ani ve Vašich skupinách)")
 
 
 def push_photo(path):
