@@ -641,7 +641,12 @@ def check_comments():
     done = state.setdefault("comments", {})
     seen = state.setdefault("commentNotifs", {})
     fb.open_notifications()
-    for notif in [n for n in fb.all_comment_notifications() if n["key"] not in seen]:
+    notifs = fb.all_comment_notifications()
+    # nová upozornění + nedávná znovu jednou za 6 h (pod příspěvek mohly přibýt odpovědi a FB upozornění nezmění);
+    # co už je vyřízené, si bot pamatuje (comments), takže nikomu neodpoví dvakrát
+    stale = lambda k: not isinstance(seen.get(k), (int, float)) or time.time() - seen[k] > 6 * 3600
+    todo = [n for i, n in enumerate(notifs) if n["key"] not in seen or (i < 6 and stale(n["key"]))]
+    for notif in todo:
         fb.open_notification(notif["key"])
         all_comments = fb.read_post_comments()
         if not all_comments:  # nic nenačteno – radši zkusit příště, než to označit jako vyřízené
@@ -695,7 +700,7 @@ def check_comments():
         retry = state.setdefault("dmRetry", [])
         retry += [{"key": notif["key"], "name": c["name"], "first": c["first"], "dm": dm, "tries": 0} for c, dm in dms]
         if SEND and not failed:
-            seen[notif["key"]] = datetime.now().strftime("%d. %m. %H:%M")
+            seen[notif["key"]] = time.time()
             save_state()
     send_comment_dms(fb)
 
