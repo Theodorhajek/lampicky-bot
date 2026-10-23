@@ -343,7 +343,10 @@ def open_notification(key):
         if match and 250 < match["bounds"][1] and match["bounds"][3] < 2050:  # celé vidět (ne pod spodní lištou)
             x1, y1, x2, y2 = match["bounds"]
             d.click((x1 + x2) // 2, (y1 + y2) // 2)
-            if not (d(descriptionStartsWith="Příspěvek od").wait(timeout=20) or d(description="Komentář").exists):
+            # otevře se celý příspěvek, nebo jen vlákno „Odpovědi“ u komentáře
+            if not (d(descriptionStartsWith="Příspěvek od").wait(timeout=20) or d(description="Komentář").exists
+                    or d(text="Odpovědi").exists or d(textStartsWith="Odpovědi na komentář").exists
+                    or d(descriptionStartsWith="Odpovědi na komentář").exists):
                 raise RuntimeError("po klepnutí na upozornění se neotevřel příspěvek")
             time.sleep(3)
             return
