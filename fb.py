@@ -288,6 +288,8 @@ DEBUG = False
 # „Jaroslav Strakoš s 5 dalšími okomentovali váš příspěvek ve skupině …“, „X odpověděl(a) na váš komentář …: „text““
 COMMENT_RE = re.compile(r"^(?P<name>.+?) (?:s \d+ dalšími |a \d+ dalších )?(?P<kind>okomentoval\w*(?:\(a\))?|odpověděl\w*(?:\(a\))?)"
                         r" (?:na )?(?P<what>váš|vaši|vás|vaše)\b.*?(?:ve skupině (?P<group>.+?))?(?:[.:]|$)")
+# „Jaro Krutilek vás zmiňuje v komentáři ve skupině F1 CZ/SK Club: "Martin Hejduk jsem v Norsku…".. 1 d.“
+MENTION_RE = re.compile(r"^(?P<name>.+?) vás (?:zmiňuje|zmínil\w*|označil\w*(?:\(a\))?) v komentáři(?: ve skupině (?P<group>.+?))?(?::|\.|$)")
 TIME_TAIL = re.compile(r"\.*\s*\d+\s*(?:s|m|h|d|t|r)\.?(?:\s*(?:Nep|P)řečteno)?\s*$|\s*(?:Nep|P)řečteno\s*$")
 
 
@@ -316,9 +318,11 @@ def comment_notifications():
         if not n.get("class", "").endswith("Button") or t.startswith("Spravovat"):
             continue
         m = COMMENT_RE.search(t)
-        if m and not any(o["key"] == TIME_TAIL.sub("", t) for o in out):
-            out.append({"key": TIME_TAIL.sub("", t)[:200], "name": m["name"].strip(), "group": (m["group"] or "").strip(" ."),
-                        "reply": m["kind"].startswith("odpověd"), "bounds": bounds(n)})
+        mention = None if m else MENTION_RE.search(t)
+        if (m or mention) and not any(o["key"] == TIME_TAIL.sub("", t)[:200] for o in out):
+            g = (m or mention)["group"]
+            out.append({"key": TIME_TAIL.sub("", t)[:200], "name": (m or mention)["name"].strip(), "group": (g or "").strip(" ."),
+                        "reply": bool(mention) or m["kind"].startswith("odpověd"), "bounds": bounds(n)})
     return out
 
 
