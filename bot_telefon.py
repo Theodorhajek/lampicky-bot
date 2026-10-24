@@ -29,7 +29,8 @@ os.environ["PATH"] = f"{ADB_DIR}{os.pathsep}{os.environ['PATH']}"
 
 import uiautomator2 as u2  # noqa: E402  (až po nastavení PATH k adb)
 
-import data  # noqa: E402  (databáze zpráv, komentářů a rozhodnutí – data/lampicky.db)
+import data  # noqa: E402
+import psani  # noqa: E402  (psaní jako člověk)  (databáze zpráv, komentářů a rozhodnutí – data/lampicky.db)
 
 CONFIG = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
 MODE = sys.argv[1] if len(sys.argv) > 1 else "run"
@@ -341,8 +342,7 @@ def send_photo(path):
 def send_message(text):
     box = d(className="android.widget.EditText")
     box.click()
-    box.set_text(text)
-    time.sleep(1)
+    psani.human_type(d, text)  # po znacích s pauzami, ne celé naráz
     tap_desc("Poslat", exact=True)
     time.sleep(2)
     d.press("back")  # schovat klávesnici

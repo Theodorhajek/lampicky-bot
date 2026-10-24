@@ -15,6 +15,8 @@ from pathlib import Path
 
 import uiautomator2 as u2
 
+import psani  # psaní po znacích s náhodnými pauzami (jako člověk)
+
 HERE = Path(__file__).resolve().parent
 ADB = str(Path.home() / ".local" / "android" / "platform-tools" / "adb")
 FB = "com.facebook.katana"
@@ -93,7 +95,8 @@ def open_group(name, members):
     else:
         raise RuntimeError("Facebook: neotevřelo se hledání")
     time.sleep(1)
-    d(className="android.widget.EditText").set_text(name)
+    d(className="android.widget.EditText").click()
+    psani.human_type(d, name)
     time.sleep(1)
     d.press("enter")
     time.sleep(6)
@@ -167,7 +170,9 @@ def compose(text, photos):
         time.sleep(1.5)
     click_desc("Napište něco…")
     time.sleep(5)
-    d(className="android.widget.EditText").set_text(text) if d(className="android.widget.EditText").exists else d(className="android.widget.AutoCompleteTextView").set_text(text)
+    box = d(className="android.widget.EditText") if d(className="android.widget.EditText").exists else d(className="android.widget.AutoCompleteTextView")
+    box.click()
+    psani.human_type(d, text)
     time.sleep(2)
     if d(description="Galerie").exists is False:
         d.press("back")  # schovat klávesnici
@@ -247,7 +252,7 @@ def fill_questions(answers):
             x1, y1, x2, y2 = bounds(n)
             d.click((x1 + x2) // 2, (y1 + y2) // 2)
             time.sleep(1)
-            d(focused=True).set_text(todo.pop(0))
+            psani.human_type(d, todo.pop(0))
             time.sleep(1)
         for n in nodes():  # souhlas s pravidly
             if n.get("checkable") == "true" and n.get("checked") == "false":
@@ -625,17 +630,20 @@ def _type_into_box(text):
     """Vloží text do pole pro komentář. Klávesnice ho umí celé zakrýt (uiautomator pak vidí jen ji) – proto ji
     nejdřív schová (pole zůstane aktivní) a pak teprve hledá pole."""
     time.sleep(2)  # klávesnice vyskakuje se zpožděním
-    for _ in range(3):
+    # po klepnutí na „Odpovědět“ je pole aktivní (kurzor za jménem) – stačí psát; vkládá se na pozici kurzoru,
+    # takže zmínka „Jméno Příjmení“ na začátku zůstane jako u člověka
+    if keyboard_shown() or d(focused=True).exists:
+        psani.human_type(d, text)
+        return
+    for _ in range(2):
         box = d(className="android.widget.AutoCompleteTextView")
         if not box.exists:
             box = d(className="android.widget.EditText")
         if box.exists:
-            try:
-                box.set_text(text)
-                time.sleep(2)
-                return
-            except Exception:  # noqa: BLE001  – pole mezitím zakryla klávesnice
-                pass
+            box.click()
+            time.sleep(1)
+            psani.human_type(d, text)
+            return
         d.press("back")  # schovat klávesnici
         time.sleep(2)
     raise RuntimeError("Facebook: nenašel jsem pole pro odpověď")
@@ -680,8 +688,7 @@ def message_commenter(name, text, message):
     if not box.wait(timeout=10):
         raise RuntimeError("v chatu chybí pole pro zprávu")
     box.click()
-    box.set_text(message)
-    time.sleep(1)
+    psani.human_type(d, message)
     send = d(descriptionStartsWith="Poslat")
     if not send.exists:
         raise RuntimeError("v chatu chybí tlačítko Poslat")
