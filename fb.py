@@ -418,6 +418,15 @@ BADGES = {"Moderátor", "Moderátorka", "Správce", "Správkyně", "Autor", "Aut
           "Expert skupiny", "Nový člen", "Nová členka", "Admin", "Sledovat", "·"}
 
 
+def age_minutes(age):
+    """„4 h“ → 240, „2 d“ → 2880, „1 T“ → 10080; neznámé → velké číslo (= staré)."""
+    m = re.match(r"(\d+)\s*(\w+)", age or "")
+    if not m:
+        return 10 ** 7
+    n, u = int(m.group(1)), m.group(2)
+    return n * {"s": 0, "m": 1, "min": 1, "h": 60, "d": 1440, "T": 10080, "t": 10080, "r": 525600}.get(u, 10 ** 6)
+
+
 def too_old(age):
     """Komentář starší než týden (nebo neznámé stáří) – na ten už bot nereaguje."""
     m = re.match(r"(\d+)\s*(\w+)", age or "")
@@ -433,6 +442,7 @@ def read_post_comments():
     found, collapsed = [], set()
     d(descriptionStartsWith="Profilový obrázek").wait(timeout=15)  # komentáře se načítají se zpožděním
     time.sleep(2)
+    sort_newest()
     idle = 0
     for _ in range(14):
         _expand_comments()  # rozbalit na téhle obrazovce a hned ji přečíst (po posunu FB odpovědi zase sbalí)
@@ -473,34 +483,46 @@ def read_post_comments():
             break
         d.swipe(540, 1700, 540, 900, 0.3)
         time.sleep(2)
+    # vlákna: komentář + odsazené odpovědi pod ním (při řazení „Nejnovější“ jsou i odpovědi podle data, ne popořadě)
     for i, c in enumerate(found):
         c.pop("y", None)
-        if not c["indent"] and c["name"] in collapsed:
-            c["answered"] = True  # nerozbalené odpovědi – radši brát jako zodpovězené
-        # odpověděl Martin někde POD tímhle komentářem (ve stejném vlákně)?
-        j = i + 1
-        while j < len(found) and found[j]["indent"]:
-            if found[j]["name"] == ME:
-                c["answered"] = True
-            j += 1
-        if c["indent"]:
-            c["toMe"] = c["text"].startswith(ME) or _thread_owner(found, i) == c["name"] and _martin_in_thread(found, i)
+    for i, c in enumerate(found):
+        start = i
+        while start > 0 and found[start]["indent"]:
+            start -= 1
+        end = start + 1
+        while end < len(found) and found[end]["indent"]:
+            end += 1
+        thread = found[start:end]
+        mine = [x for x in thread if x["name"] == ME]
+        if not c["indent"]:
+            c["answered"] = bool(mine) or c["name"] in collapsed
+        else:
+            # odpověď je vyřízená, když je ve vlákně Martinova odpověď NOVĚJŠÍ než ona
+            c["answered"] = any(age_minutes(m["age"]) < age_minutes(c["age"]) for m in mine)
+            c["toMe"] = c["text"].startswith(ME) or (thread[0]["name"] == c["name"] and bool(mine))
     return found
 
 
-def _thread_owner(found, i):
-    while i > 0 and found[i]["indent"]:
-        i -= 1
-    return found[i]["name"]
-
-
-def _martin_in_thread(found, i):
-    k = i
-    while k > 0 and found[k]["indent"]:
-        k -= 1
-        if found[k]["name"] == ME:
-            return True
-    return False
+def sort_newest():
+    """Řazení komentářů „Nejnovější“ (= všechny komentáře od nejnovějších). Při „Nejrelevantnější“ FB část komentářů schová."""
+    for _ in range(3):
+        f = d(descriptionStartsWith="Zobrazuje se")
+        if f.exists:
+            if "Nejnovější" in (f.info.get("contentDescription") or ""):
+                return True
+            f.click()
+            time.sleep(2)
+            opt = d(descriptionStartsWith="Nejnovější, ")
+            if opt.wait(timeout=5):
+                opt.click()
+                time.sleep(4)
+                return True
+            d.press("back")
+            return False
+        d.swipe(540, 1500, 540, 900, 0.3)
+        time.sleep(2)
+    return False  # příspěvek bez filtru (třeba vlákno „Odpovědi“) – nevadí
 
 
 def _merge_screen(found, screen):
