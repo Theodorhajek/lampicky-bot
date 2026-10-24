@@ -76,10 +76,27 @@ def save_comment(group, person, text, indent, reply="", dm="", note=""):
                     (time.time(), group, person, text, int(bool(indent)), reply, dm, note))
 
 
+def save_seen_comment(group, person, text, indent):
+    """Každý přečtený komentář (i ten, na který se neodpovídá) – ať víme, kdo co psal."""
+    with db() as con:
+        con.execute("INSERT OR IGNORE INTO comments(ts, grp, person, text, indent, reply, dm, note) VALUES (?,?,?,?,?,'','','')",
+                    (time.time(), group, person, text, int(bool(indent))))
+
+
 def save_decision(kind, person, input_text, output, handoff=False, note=""):
     with db() as con:
         con.execute("INSERT INTO decisions(ts, kind, person, input, output, handoff, note) VALUES (?,?,?,?,?,?,?)",
                     (time.time(), kind, person, input_text, json.dumps(output, ensure_ascii=False), int(bool(handoff)), note))
+
+
+def comments_of(person, limit=6):
+    """Co tenhle člověk psal pod mými příspěvky (skupina + text) – kontext pro chat v Messengeru."""
+    try:
+        with db() as con:
+            rows = con.execute("SELECT grp, text, reply FROM comments WHERE person=? ORDER BY ts DESC LIMIT ?", (person, limit)).fetchall()
+        return "\n".join(f"- ve skupině {g or '?'}: „{t}“" + (f" (odpověděl jsem: „{r}“)" if r else "") for g, t, r in reversed(rows))
+    except sqlite3.Error:
+        return ""
 
 
 def manual_examples(limit=8):

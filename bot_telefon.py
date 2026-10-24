@@ -464,6 +464,9 @@ def transcript(messages):
 
 def ask_claude(name, messages, late=False):
     prompt = f"Konverzace se zákazníkem ({name}), nejstarší nahoře:\n\n{transcript(messages)}\n\nNapiš další odpověď za mě."
+    commented = data.comments_of(name)
+    if commented:
+        prompt += f"\n\nTenhle člověk dřív psal komentáře pod mými příspěvky (z toho víš, co chce – neptej se znovu):\n{commented}"
     if late:
         prompt += (" Zákazník čeká na odpověď déle než 24 hodin – první zpráva ať je krátká omluva za zpoždění"
                    " (např. „Dobrý den, omlouvám se za pozdější odpověď.“), pak normálně odpověz.")
@@ -649,6 +652,12 @@ def check_comments():
     for notif in todo:
         fb.open_notification(notif["key"])
         all_comments = fb.read_post_comments()
+        try:
+            for c in all_comments:
+                if c["name"] != fb.ME:
+                    data.save_seen_comment(notif["group"], c["name"], c["text"], c["indent"])
+        except Exception:  # noqa: BLE001
+            pass
         if not all_comments:  # nic nenačteno – radši zkusit příště, než to označit jako vyřízené
             log(notif["group"] or "komentáře", "pod příspěvkem jsem nic nenačetl, zkusím příště", notif["key"])
             continue
@@ -947,8 +956,26 @@ def main():
     seen_fb = facebook_comment_notifications()
     next_comments = 0  # hned po startu jednou projít komentáře
     failures = 0
+    offline_since = None
     while True:
         try:
+            # bez internetu v telefonu nechodí zprávy ani nejde nic odeslat – počkat a dát vědět
+            if not phone_online():
+                if offline_since is None:
+                    offline_since = time.time()
+                    print(f"[{datetime.now():%H:%M:%S}] TELEFON JE BEZ INTERNETU – čekám", flush=True)
+                    log("telefon", "BEZ INTERNETU")
+                    subprocess.run(["adb", "shell", "svc", "wifi", "enable"], capture_output=True)  # kdyby se Wi-Fi vypnula
+                if time.time() - offline_since > 120 and not getattr(main, "offline_notified", False):
+                    notify("Lampičky – telefon je bez internetu", "Bot nemůže číst ani posílat zprávy. Zkontroluj Wi-Fi / hotspot.")
+                    main.offline_notified = True
+                time.sleep(60)
+                continue
+            if offline_since is not None:
+                print(f"[{datetime.now():%H:%M:%S}] internet je zpátky (výpadek {round((time.time() - offline_since) / 60)} min) – projdu všechno", flush=True)
+                log("telefon", "internet zpátky")
+                offline_since, main.offline_notified = None, False
+                next_chats = next_requests = next_comments = 0  # dohnat, co mezitím přišlo
             now = time.time()
             notifs = messenger_notifications()
             new = notifs - seen_notifs
@@ -1007,6 +1034,15 @@ def main():
                 leave_app()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def phone_online():
+    """Má telefon internet? (ping na 8.8.8.8, pro jistotu i 1.1.1.1)"""
+    for host in ("8.8.8.8", "1.1.1.1"):
+        out = subprocess.run(["adb", "shell", "ping", "-c", "1", "-W", "3", host], capture_output=True, text=True, timeout=20).stdout
+        if " 1 received" in out:
+            return True
+    return False
 
 
 def is_connection_error(e):
