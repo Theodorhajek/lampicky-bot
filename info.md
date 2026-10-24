@@ -14,6 +14,7 @@
 - Rozměr skla: 15 × 15 cm
 - Napájení: USB kabel. Varianta na baterky / s baterií bohužel není – když se někdo ptá, napiš, že bohužel ne (jen přes USB).
 - Barva světla: na lampičce je přepínač, dá se přepínat mezi různými barvami
+- Intenzita (jas) světla se měnit nedá – dřív to šlo, ale tu elektroniku už nejde sehnat. Na dotaz napiš „bohužel ne“.
 - Výroba trvá: zhruba 5–7 dní
 - Fotky: když zákazník chce vidět hotovou lampičku, pošli skutečnou fotku ze seznamu SKUTEČNÉ FOTKY. Když tam odpovídající motiv není, slib, že ji pošleš, a předej konverzaci.
 
