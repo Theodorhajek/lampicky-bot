@@ -1,7 +1,8 @@
-"""Psaní jako člověk: text se do aktivního pole vkládá po znacích (občas po dvou) s náhodnými pauzami,
+"""Psaní jako člověk: text v aktivním poli postupně přibývá po znacích (občas po dvou) s náhodnými pauzami,
 místo vložení celé zprávy naráz. Podporuje češtinu (háčky, čárky) i emoji.
 
-Znaky jdou přes schránku → vložit na pozici kurzoru (normální klávesnice Gboard zůstává, nic se neinstaluje).
+Bez schránky (vkládání ze schránky Android hlásí a vypadá podezřele) – pole se jen postupně prodlužuje,
+stejně jako když člověk píše. Normální klávesnice Gboard zůstává, nic se neinstaluje.
 """
 
 import random
@@ -34,12 +35,14 @@ def _chunks(text):
 
 def human_type(d, text):
     """Napíše text do právě aktivního (focused) pole. Pole musí být předem aktivní (klepnuto)."""
+    field = d(focused=True)
+    if not field.wait(timeout=5):
+        raise RuntimeError("psaní: žádné aktivní pole")
     time.sleep(random.uniform(0.4, 0.9))
-    prev = ""
+    typed, prev = "", ""
     for chunk in _chunks(text):
-        d.clipboard = chunk
-        d.jsonrpc.pasteClipboard()
+        typed += chunk
+        field.set_text(typed)
         time.sleep(_delay(chunk[-1], prev))
         prev = chunk[-1]
-    d.clipboard = " "  # ve schránce nenechat poslední kus zprávy
     time.sleep(random.uniform(0.5, 1.2))  # chvilka, než „klepne“ na Odeslat

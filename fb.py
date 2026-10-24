@@ -632,9 +632,13 @@ def _type_into_box(text):
     time.sleep(2)  # klávesnice vyskakuje se zpožděním
     # po klepnutí na „Odpovědět“ je pole aktivní (kurzor za jménem) – stačí psát; vkládá se na pozici kurzoru,
     # takže zmínka „Jméno Příjmení“ na začátku zůstane jako u člověka
-    if keyboard_shown() or d(focused=True).exists:
+    try:
         psani.human_type(d, text)
         return
+    except Exception:  # noqa: BLE001  – pole zakryla klávesnice; schovat ji a zkusit znovu
+        if keyboard_shown():
+            d.press("back")
+            time.sleep(1.5)
     for _ in range(2):
         box = d(className="android.widget.AutoCompleteTextView")
         if not box.exists:
