@@ -48,12 +48,15 @@ def _bmw_roundel(img, cx, cy, R):
     qd.rectangle([cx - line // 2, cy - q, cx + line // 2, cy + q], fill=255)
     qd.rectangle([cx - q, cy - line // 2, cx + q, cy + line // 2], fill=255)
     img.paste(0, (0, 0), ImageChops.multiply(disc, quads))
-    font = ImageFont.truetype(LETTER_FONT[0], int(R * 0.30), index=LETTER_FONT[1])
+    font = ImageFont.truetype(LETTER_FONT[0], int(R * 0.40), index=LETTER_FONT[1])
     rm = (R + r_in) / 2
     for ch, ang in zip("BMW", (-127, -90, -53)):
         a = math.radians(ang)
-        tile = Image.new("L", (int(R * 0.6), int(R * 0.6)), 0)
-        ImageDraw.Draw(tile).text((tile.width / 2, tile.height / 2), ch, font=font, fill=255, anchor="mm")
+        glyph = Image.new("L", (int(R * 0.75), int(R * 0.75)), 0)
+        ImageDraw.Draw(glyph).text((glyph.width / 2, glyph.height / 2), ch, font=font, fill=255, anchor="mm")
+        glyph = glyph.crop(glyph.getbbox())  # přesně podle tvaru písmene → sedí uprostřed pásu
+        tile = Image.new("L", (int(R * 0.75), int(R * 0.75)), 0)
+        tile.paste(glyph, ((tile.width - glyph.width) // 2, (tile.height - glyph.height) // 2))
         tile = tile.rotate(-(ang + 90), resample=Image.BICUBIC)
         img.paste(0, (int(cx + rm * math.cos(a) - tile.width / 2), int(cy + rm * math.sin(a) - tile.height / 2)), tile)
 
