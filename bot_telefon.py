@@ -994,6 +994,8 @@ def main():
                 log("telefon", "internet zpátky")
                 offline_since, main.offline_notified = None, False
                 next_chats = next_requests = next_comments = 0  # dohnat, co mezitím přišlo
+            if process_outbox():  # odpovědi a povely z dashboardu mají přednost
+                seen_notifs = messenger_notifications()
             now = time.time()
             notifs = messenger_notifications()
             new = notifs - seen_notifs
@@ -1061,6 +1063,57 @@ def phone_online():
         if " 1 received" in out:
             return True
     return False
+
+
+def open_chat_any(person):
+    """Otevře chat s člověkem – hledá v seznamu chatů (posouvá), pak v žádostech o zprávy."""
+    go_home()
+    for _ in range(10):
+        if d(descriptionStartsWith=f"{person}, ").exists:
+            open_chat(person)
+            return
+        d.swipe(540, 1900, 540, 900, 0.3)
+        time.sleep(1.5)
+    for tab in ("MOŽNÁ ZNÁTE", "SPAM"):
+        open_requests(tab)
+        if d(descriptionStartsWith=f"{person}, ").exists:
+            open_chat(person)
+            return
+    raise RuntimeError(f"chat s {person} jsem nenašel")
+
+
+def process_outbox():
+    """Úkoly z dashboardu: napsat zprávu (po znacích, jako ty), vrátit konverzaci botovi, převzít konverzaci."""
+    items = data.outbox_pending()
+    if not items:
+        return False
+    for oid, kind, person, text in items:
+        t = thread(person)
+        try:
+            if kind == "botovi":
+                t.update(handedOff=False, preview="", pausedUntil=0, botReplies=0, handled="")
+                log(person, "vráceno botovi (dashboard)")
+            elif kind == "prevzit":
+                t.update(handedOff=True)
+                log(person, "převzato tebou (dashboard) – bot mlčí")
+            elif kind == "zprava" and SEND:
+                open_chat_any(person)
+                for i, part in enumerate(p for p in text.split("\n\n") if p.strip()):  # prázdný řádek = další zpráva
+                    if i:
+                        time.sleep(random.uniform(2, 5))
+                    send_message(part.strip())
+                t["pausedUntil"] = (time.time() + CONFIG["pauseAfterManualReplyHours"] * 3600) * 1000  # píšeš ty – bot mlčí
+                data.save_conversation(person, read_messages(), t["botSent"])
+                log(person, "odesláno z dashboardu", text)
+            data.outbox_done(oid)
+        except Exception as e:  # noqa: BLE001
+            if is_connection_error(e):
+                raise
+            data.outbox_done(oid, False, str(e))
+            log(person, "DASHBOARD – CHYBA", str(e))
+        save_state()
+    leave_app()
+    return True
 
 
 def is_connection_error(e):

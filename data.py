@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY, ts REAL, grp TEXT, person TEXT, text TEXT, indent INTEGER, reply TEXT, dm TEXT, note TEXT,
   UNIQUE(grp, person, text));
+CREATE TABLE IF NOT EXISTS outbox (
+  id INTEGER PRIMARY KEY, ts REAL, kind TEXT, person TEXT, text TEXT, status TEXT DEFAULT 'ceka', error TEXT, done_ts REAL);
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY, ts REAL, kind TEXT, person TEXT, input TEXT, output TEXT, handoff INTEGER, note TEXT);
 """
@@ -115,6 +117,24 @@ def manual_examples(limit=8):
             return "\n".join(out[-limit:])
     except sqlite3.Error:
         return ""
+
+
+# ---------- fronta pro bota z dashboardu (odpovědi a povely) ----------
+
+def outbox_add(kind, person, text=""):
+    """kind: 'zprava' (napsat zprávu do Messengeru), 'botovi' (vrátit konverzaci botovi), 'prevzit' (bot ať mlčí)."""
+    with db() as con:
+        con.execute("INSERT INTO outbox(ts, kind, person, text) VALUES (?,?,?,?)", (time.time(), kind, person, text))
+
+
+def outbox_pending():
+    with db() as con:
+        return con.execute("SELECT id, kind, person, text FROM outbox WHERE status='ceka' ORDER BY id").fetchall()
+
+
+def outbox_done(oid, ok=True, error=""):
+    with db() as con:
+        con.execute("UPDATE outbox SET status=?, error=?, done_ts=? WHERE id=?", ("hotovo" if ok else "chyba", error, time.time(), oid))
 
 
 def main():
