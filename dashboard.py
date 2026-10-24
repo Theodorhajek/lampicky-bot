@@ -794,7 +794,7 @@ def nav_counts():
     def calc():
         it = items()
         op = [o for o in orders() if o["step"] != "odeslano"]
-        return {"prehled": len(it["reply"]), "objednavky": len(op), "late": any(o["late"] for o in op)}
+        return {"prehled": len(it["reply"]) + len(pending_proposals()), "objednavky": len(op), "late": any(o["late"] for o in op)}
     return memo("counts", calc)
 
 
@@ -1568,11 +1568,60 @@ def order_html(o, nxt, compact=False):
 
 # ====================================================================== Přehled
 
+def pending_proposals():
+    try:
+        return data.proposals("ke_schvaleni")
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def proposals_html():
+    rows = pending_proposals()
+    if not rows:
+        return ""
+    out = f'<h2>Návrhy ke schválení <span class="cnt">{len(rows)}</span></h2>'
+    for pid, ts, person, file, motif, label, caption, status in rows:
+        rel = Path(file).resolve().relative_to(HERE) if Path(file).is_file() else None
+        img = f'<a href="/foto?p={quote(str(rel))}" target="_blank"><img src="/foto?p={quote(str(rel))}" alt="návrh" style="width:220px;max-width:100%;border:1px solid var(--line);border-radius:10px;background:#fff"></a>' if rel else '<div class="small">obrázek chybí</div>'
+        out += (f'<article class="card ja"><div class="ch"><a class="nml" href="{conv_url(person)}">{h(person)}</a>'
+                f'<span class="chip ja">návrh</span><span class="right small">{h(ago(ts))}</span></div>'
+                f'<div class="why">{h(motif)}{(" + „" + h(label) + "“") if label else ""} – zkontroluj a pošli. Zákazník ho uvidí až po schválení.</div>'
+                f'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">{img}'
+                f'<form method="post" action="/navrh" style="flex:1;min-width:220px">'
+                f'<input type="hidden" name="id" value="{pid}"><input type="hidden" name="next" value="/">'
+                f'<label class="small">Text k obrázku</label><textarea name="caption" rows="2" style="width:100%">{h(caption or "")}</textarea>'
+                f'<div class="acts" style="margin-top:8px"><button class="btn pri" name="do" value="poslat">Schválit a poslat</button>'
+                f'<button class="btn ghost sm" name="do" value="zamitnout">Zamítnout</button>'
+                f'<a class="more" href="{conv_url(person)}">Otevřít chat →</a></div></form></div></article>')
+    return out
+
+
+@app.route("/navrh", methods=["POST"])
+def navrh_akce():
+    if not same_origin():
+        return deny()
+    try:
+        pid = int(request.form.get("id") or 0)
+        row = next((r for r in pending_proposals() if r[0] == pid), None)
+        if not row:
+            return back("Návrh už je vyřízený")
+        caption = (request.form.get("caption") or "").strip()
+        if request.form.get("do") == "poslat":
+            data.proposal_set(pid, "schvaleno", caption)
+            data.outbox_add("navrh", row[2], json.dumps({"pid": pid, "file": row[3], "text": caption}, ensure_ascii=False))
+            return back("Návrh se posílá přes telefon")
+        data.proposal_set(pid, "zamitnuto", caption)
+        return back("Návrh zamítnut")
+    except Exception:  # noqa: BLE001
+        return back("Nepovedlo se uložit")
+
+
 def prehled_html():
     it = items()
     body = ""
     for title, how in alerts():
         body += f'<div class="alert" role="alert"><b>{h(title)}</b>{how}</div>'
+    body += proposals_html()
     reply = it["reply"]
     if reply:
         first = reply[0]
@@ -2170,7 +2219,7 @@ def shot(folder):
 def foto():
     p = request.args.get("p", "")
     f = (HERE / p).resolve()
-    if not any((HERE / d).resolve() in f.parents for d in ("posty", "fotky")) or not f.is_file():
+    if not any((HERE / d).resolve() in f.parents for d in ("posty", "fotky", "navrhy")) or not f.is_file():
         abort(404)
     return send_file(f)
 

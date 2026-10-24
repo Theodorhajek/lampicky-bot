@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY, ts REAL, grp TEXT, person TEXT, text TEXT, indent INTEGER, reply TEXT, dm TEXT, note TEXT,
   UNIQUE(grp, person, text));
+CREATE TABLE IF NOT EXISTS proposals (
+  id INTEGER PRIMARY KEY, ts REAL, person TEXT, file TEXT, motif TEXT, label TEXT, caption TEXT, status TEXT DEFAULT 'ke_schvaleni');
 CREATE TABLE IF NOT EXISTS outbox (
   id INTEGER PRIMARY KEY, ts REAL, kind TEXT, person TEXT, text TEXT, status TEXT DEFAULT 'ceka', error TEXT, done_ts REAL);
 CREATE TABLE IF NOT EXISTS decisions (
@@ -135,6 +137,28 @@ def outbox_pending():
 def outbox_done(oid, ok=True, error=""):
     with db() as con:
         con.execute("UPDATE outbox SET status=?, error=?, done_ts=? WHERE id=?", ("hotovo" if ok else "chyba", error, time.time(), oid))
+
+
+# ---------- návrhy pro zákazníky (bot vytvoří, ty schválíš v dashboardu) ----------
+
+def proposal_add(person, file, motif, label, caption):
+    with db() as con:
+        con.execute("INSERT INTO proposals(ts, person, file, motif, label, caption) VALUES (?,?,?,?,?,?)",
+                    (time.time(), person, str(file), motif, label, caption))
+
+
+def proposals(status="ke_schvaleni"):
+    with db() as con:
+        return con.execute("SELECT id, ts, person, file, motif, label, caption, status FROM proposals WHERE status=? ORDER BY id",
+                           (status,)).fetchall()
+
+
+def proposal_set(pid, status, caption=None):
+    with db() as con:
+        if caption is not None:
+            con.execute("UPDATE proposals SET status=?, caption=? WHERE id=?", (status, caption, pid))
+        else:
+            con.execute("UPDATE proposals SET status=? WHERE id=?", (status, pid))
 
 
 def main():

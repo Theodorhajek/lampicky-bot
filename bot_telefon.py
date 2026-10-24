@@ -395,10 +395,12 @@ REPLY_SCHEMA = {
         "action": {"type": "string", "enum": ["reply", "none", "block"]},
         "messages": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
         "photo": {"type": "string"},
+        "design": {"type": "string"},
+        "design_text": {"type": "string"},
         "handoff": {"type": "boolean"},
         "note": {"type": "string"},
     },
-    "required": ["action", "messages", "photo", "handoff", "note"],
+    "required": ["action", "messages", "photo", "design", "design_text", "handoff", "note"],
     "additionalProperties": False,
 }
 
@@ -414,6 +416,7 @@ Píšeš za něj, v první osobě, česky. Vykáš (prodejce píše zákazníků
 - Rozměr, napájení, barvy, materiál apod. zmiň, jen když se na ně ptá.
 - Fotky: když zákazník chce vidět, jak lampička vypadá, a v SKUTEČNÝCH FOTKÁCH níže je odpovídající motiv, dej do photo název souboru (pošle se po zprávách) a napiš krátce např. „Tohle BMW jsem už jednou dělal 🙂". Když odpovídající fotka není, photo="" a handoff=true (fotku pošle prodejce). Jinak vždy photo="".
 - Když zákazník napíše, odkud je, NIKDY nepotvrzuj, že tam pošleš („do Přerova to bez problému pošlu Zásilkovnou nebo PPL" je zbytečné – posíláme kamkoliv v ČR i SK). Prostě pokračuj dalším krokem (adresa/výdejní místo, telefon, e-mail).
+- Návrh: když zákazník chce vidět návrh / jak by to vypadalo s jeho motivem a případně jménem nebo nápisem, dej do design motiv (např. „BMW", „Kawasaki", „logo kapely Kabát") a do design_text jméno/nápis pod logo (nebo ""). Do messages napiš jen krátce např. „Jasně, připravím vám návrh, chviličku 🙂". Návrh vytvoří a pošle prodejce. Jinak design="" a design_text="".
 - Na potvrzení stačí „OK" nebo „Rozumím." – nikdy „Rozumím, děkuji", „Děkuji za informaci" apod.
 - Když zákazník napíše motiv/značku (Kawasaki, BMW, Ferrari…), reaguj přirozeně a pozitivně, např. „Kawasaki by určitě šlo 🙂". Nikdy nepiš nic o tom, odkud vezmeš logo nebo podklady (žádné „logo si seženu sám") – to je jen interní informace pro tebe, aby ses po zákazníkovi nechtěl fotku loga.
 
@@ -559,6 +562,8 @@ def handle_thread(conv):
                 if i:
                     time.sleep(random.uniform(3, 8))  # jako když člověk píše další zprávu
                 send_message(m)
+            if (answer.get("design") or "").strip():
+                make_proposal(name, answer["design"].strip(), (answer.get("design_text") or "").strip(), messages)
             photo = PHOTOS / Path(answer.get("photo") or "").name
             if answer.get("photo") and photo.is_file():
                 time.sleep(random.uniform(3, 6))
@@ -1065,6 +1070,21 @@ def phone_online():
     return False
 
 
+def make_proposal(person, motif, label, messages):
+    """Vytvoří černobílý návrh (motiv + jméno) a dá ho do dashboardu ke schválení. Pošle se až po schválení."""
+    try:
+        import navrh  # noqa: PLC0415
+        f = navrh.make(motif, label, person)
+        formal = not any(re.match(r"(?i)\s*(ahoj|čau|cau|nazdar)", m["text"] or "") for m in messages if m["from"] == "them")
+        caption = ("Dobrý den, tady je návrh 🙂 Takhle by to šlo?" if formal else "Tady je návrh 🙂 Takhle by to šlo?")
+        data.proposal_add(person, f, motif, label, caption)
+        log(person, "NÁVRH KE SCHVÁLENÍ", f"{motif}{' + ' + label if label else ''} – schval v dashboardu")
+        notify("Lampičky – návrh ke schválení", f"{person}: {motif} {label}".strip())
+    except Exception as e:  # noqa: BLE001
+        log(person, "NÁVRH – CHYBA", str(e))
+        notify("Lampičky – návrh se nepovedl", f"{person}: {e}"[:200])
+
+
 def open_chat_any(person):
     """Otevře chat s člověkem – hledá v seznamu chatů (posouvá), pak v žádostech o zprávy."""
     go_home()
@@ -1096,6 +1116,16 @@ def process_outbox():
             elif kind == "prevzit":
                 t.update(handedOff=True)
                 log(person, "převzato tebou (dashboard) – bot mlčí")
+            elif kind == "navrh" and SEND:  # schválený návrh z dashboardu: text + obrázek
+                job = json.loads(text)
+                open_chat_any(person)
+                if job.get("text"):
+                    send_message(job["text"])
+                    time.sleep(random.uniform(2, 4))
+                send_photo(Path(job["file"]))
+                data.proposal_set(job["pid"], "odeslano")
+                t["botSent"] = (t["botSent"] + [job.get("text", "")])[-20:]
+                log(person, "odeslán návrh (schválený)", job.get("text", ""))
             elif kind == "zprava" and SEND:
                 open_chat_any(person)
                 for i, part in enumerate(p for p in text.split("\n\n") if p.strip()):  # prázdný řádek = další zpráva
