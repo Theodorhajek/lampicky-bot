@@ -50,7 +50,7 @@ def bot_history():
     if log.exists():
         for line in log.read_text(encoding="utf-8").splitlines():
             parts = line.split(";", 3)
-            if len(parts) == 4 and parts[2].startswith("odesl"):
+            if len(parts) == 4 and parts[2].startswith("odesl") and "dashboard" not in parts[2]:  # z dashboardu = píšeš ty
                 out |= {norm(x) for x in parts[3].strip('"').split(" / ")}
     return out
 
