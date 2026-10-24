@@ -673,34 +673,52 @@ def check_comments():
             else:
                 merged[c["name"]] = dict(c, first=c["text"])
         dms, failed = [], False
+        # 1) rozmyslet odpovědi na všechny komentáře (telefon mezitím stojí na příspěvku)
+        plan = []
         for c in merged.values():
-            name, ckey = c["name"], f"{c['name']}|{c['first'][:80]}"
+            name = c["name"]
             item = {"name": name, "text": c["text"], "reply": c["indent"], "group": notif["group"], "key": notif["key"],
                     "thread": thread_context(all_comments, c)}
             try:
                 answer = ask_claude_comment(item)
-                reply, dm = answer["comment_reply"].strip(), answer["dm"].strip()
+            except Exception as e:  # noqa: BLE001
+                failed = True
+                comment_error(name, c["text"], e)
+                continue
+            try:
+                data.save_comment(notif["group"], name, c["text"], c["indent"], answer["comment_reply"].strip(),
+                                  answer["dm"].strip() if answer["send_dm"] else "", answer.get("note", ""))
+                data.save_decision("comment", name, item.get("thread") or c["text"], answer, False, answer.get("note", ""))
+            except Exception:  # noqa: BLE001
+                pass
+            plan.append((c, answer))
+        # 2) odpovědět na místě, odspodu nahoru (po přečtení je bot dole a řazení je „Nejnovější“ → dole nejstarší)
+        pos = lambda c: next((i for i, x in enumerate(all_comments) if (x["name"], x["text"]) == (c["name"], c["first"])), 0)
+        plan.sort(key=lambda ca: -pos(ca[0]))
+        for c, answer in plan:
+            name, ckey = c["name"], f"{c['name']}|{c['first'][:80]}"
+            reply, dm = answer["comment_reply"].strip(), answer["dm"].strip()
+            mark = lambda answer=answer, c=c, ckey=ckey: [done.__setitem__(k, answer.get("note", "")) for k in [ckey] + c.get("also", [])] and save_state()
+            if not SEND:
+                log(name, "KOMENTÁŘ – NÁVRH (neodesláno)", f"„{c['text']}“ → {reply or '—'} | DM: {dm if answer['send_dm'] else '—'}")
+                continue
+            t = thread(name)
+            if answer["send_dm"] and dm and not t.get("dmFromComment") and not t.get("blocked") and not t.get("handled"):
+                dms.append((c, dm))
+            if not reply:
+                mark()
+                log(name, "komentář bez veřejné odpovědi", f"„{c['text']}“ – {answer.get('note', '')}")
+                continue
+            try:
                 try:
-                    data.save_comment(notif["group"], name, c["text"], c["indent"], reply, dm if answer["send_dm"] else "", answer.get("note", ""))
-                    data.save_decision("comment", name, item.get("thread") or c["text"], answer, False, answer.get("note", ""))
-                except Exception:  # noqa: BLE001
-                    pass
-                mark = lambda: [done.__setitem__(k, answer.get("note", "")) for k in [ckey] + c.get("also", [])] and save_state()
-                if not SEND:
-                    log(name, "KOMENTÁŘ – NÁVRH (neodesláno)", f"„{c['text']}“ → {reply or '—'} | DM: {dm if answer['send_dm'] else '—'}")
-                    continue
-                t = thread(name)
-                if answer["send_dm"] and dm and not t.get("dmFromComment") and not t.get("blocked") and not t.get("handled"):
-                    dms.append((c, dm))
-                if not reply:
-                    mark()
-                    log(name, "komentář bez veřejné odpovědi", f"„{c['text']}“ – {answer.get('note', '')}")
-                    continue
-                fb.open_notification(notif["key"])  # příspěvek znovu odshora, ať se komentář najde
-                fb.reply_to_comment(name, c["first"], reply)
+                    fb.reply_to_comment(name, c["first"], reply)
+                except RuntimeError:
+                    fb.open_notification(notif["key"])  # stránka se mezitím rozhodila – jednou znovu otevřít
+                    fb.sort_newest()
+                    fb.reply_to_comment(name, c["first"], reply)
                 mark()  # vyřízeno až po odeslání – při chybě to bot zkusí příště znovu
                 log(name, "komentář – odpověděl jsem", f"„{c['text']}“ → {reply}")
-                time.sleep(random.uniform(10, 30))
+                time.sleep(random.uniform(4, 10))
             except Exception as e:  # noqa: BLE001
                 failed = True  # upozornění neoznačit jako vyřízené – příště se komentář zkusí znovu
                 if is_connection_error(e):

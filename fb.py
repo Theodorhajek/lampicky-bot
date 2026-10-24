@@ -551,20 +551,42 @@ def _expand_comments():
             time.sleep(3)
 
 
-def _find_comment(name, text):
-    """Na otevřeném příspěvku najde komentář (tlačítko se jménem a hned za ním tlačítko s textem), vrací bounds textu."""
+def _match_comment(name, text):
     snippet = re.sub(r"\W+", "", text[:25]).lower()
-    for _ in range(10):
-        _expand_comments()  # komentář může být schovaný pod „Zobrazit předchozí komentáře“
-        buttons = [n for n in nodes() if n.get("class", "").endswith("Button")]
-        for i, n in enumerate(buttons[:-1]):
-            if (n.get("content-desc") or n.get("text")) == name and bounds(buttons[i + 1])[0] >= 100:
-                t = buttons[i + 1].get("content-desc") or buttons[i + 1].get("text") or ""
-                if (snippet and snippet in re.sub(r"\W+", "", t).lower()) or (not snippet and t.strip() == text.strip()):  # jen emoji
-                    return bounds(buttons[i + 1])
-        d.swipe(540, 1700, 540, 1000, 0.3)
-        time.sleep(2)
+    buttons = [n for n in nodes() if n.get("class", "").endswith("Button")]
+    for i, n in enumerate(buttons[:-1]):
+        if (n.get("content-desc") or n.get("text")) == name and bounds(buttons[i + 1])[0] >= 100:
+            t = buttons[i + 1].get("content-desc") or buttons[i + 1].get("text") or ""
+            if (snippet and snippet in re.sub(r"\W+", "", t).lower()) or (not snippet and t.strip() == text.strip()):  # jen emoji
+                return bounds(buttons[i + 1])
     return None
+
+
+def _find_comment(name, text):
+    """Na otevřeném příspěvku najde komentář (jméno + text) – nejdřív na obrazovce, pak nahoru, pak dolů.
+    Bot zůstává na stejném příspěvku, nic znovu neotevírá. Vrací bounds textu komentáře."""
+    for direction in ("tady", "nahoru", "dolů"):
+        for _ in range(1 if direction == "tady" else 14):
+            _expand_comments()  # komentář může být schovaný pod „Zobrazit předchozí komentáře“
+            b = _match_comment(name, text)
+            if b:
+                return b
+            if direction == "tady":
+                break
+            before = d.dump_hierarchy()
+            if direction == "nahoru":
+                d.swipe(540, 800, 540, 1600, 0.3)
+            else:
+                d.swipe(540, 1600, 540, 800, 0.3)
+            time.sleep(1.5)
+            if d.dump_hierarchy() == before:
+                break  # začátek / konec stránky
+    return None
+
+
+def keyboard_shown():
+    out = subprocess.run([ADB, "shell", "dumpsys", "input_method"], capture_output=True, text=True).stdout
+    return "mInputShown=true" in out
 
 
 def reply_to_comment(name, text, reply):
@@ -593,7 +615,10 @@ def reply_to_comment(name, text, reply):
     if not in_thread and not d(descriptionStartsWith="Odpovídáte uživateli").exists and not d(textStartsWith="Odpovídáte uživateli").exists:
         raise RuntimeError("Facebook: nejsem v režimu odpovědi na komentář – neodesílám")
     click_desc("Odeslat")
-    time.sleep(5)
+    time.sleep(4)
+    if keyboard_shown():
+        d.press("back")  # schovat klávesnici, ať jde stránkou dál posouvat
+        time.sleep(1)
 
 
 def _type_into_box(text):
