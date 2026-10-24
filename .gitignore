@@ -20,3 +20,4 @@ konverzace*.json
 .gemini_key
 audit_komentare.json
 data/
+dashboard_stav.json
