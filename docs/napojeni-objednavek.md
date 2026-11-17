@@ -1,31 +1,21 @@
-# Úkol: API pro objednávky lampiček (server → Shopify)
+# Objednávky lampiček: JSON, který posíláme na server
 
-> Tento dokument je zadání pro Clauda (nebo vývojáře) s přístupem k našemu serveru na Hetzneru.
-> Klientskou stranu (bot na Macu) dodělá Theodor, až budou hotové body z části „Co vrátit zpět“.
+> Pro Honzu / Clauda s přístupem k našemu serveru. Popisuje **jen to, co bot posílá**.
+> Jak to napárovat na náš stávající systém a Shopify, je na vás.
 
 ## Kontext
 
 Ručně dělané LED lampičky (gravírované akrylové sklo 15 × 15 cm na bukovém podstavci) prodáváme přes Facebook.
-Objednávky domlouvá bot v Messengeru (Python na Theodorově Macu, repozitář `Theodorhajek/lampicky-bot`).
-Jakmile bot od zákazníka získá všechny údaje, má objednávku poslat na náš server. Server ji uloží a založí
-objednávku v Shopify. Později bot pošle změny stavu (vyrobeno, odesláno, zrušeno).
+Objednávky domlouvá bot v Messengeru (repozitář `Theodorhajek/lampicky-bot`). Jakmile má od zákazníka všechny
+údaje, pošle objednávku na server – ta se má **rovnou propsat do Shopify**. Později pošle změny stavu
+(vyrobeno, odesláno, zrušeno). Platby server neřeší, páruje si je Theodor.
 
-**Platby server neřeší.** Theodor si je páruje sám. Objednávka nese jen informaci, jak zákazník platí.
+## Co od serveru potřebujeme
 
-## Co implementovat
-
-1. HTTPS endpointy pod základní adresou, např. `https://<server>/api/lampicky`:
-   - `POST /objednavky` – založení objednávky
-   - `PATCH /objednavky/{id}` – změna stavu
-   - (volitelně) `GET /objednavky/{id}` – stav a číslo objednávky v Shopify
-2. Ověření tokenem v hlavičce `Authorization: Bearer <token>`. Vygeneruj náhodný token (min. 32 znaků).
-3. Uložení objednávek do DB serveru (stačí tabulka s `id`, JSON těla, stavem, `shopify_order_id`, časy).
-4. Založení a aktualizace objednávky v Shopify přes Admin GraphQL API (viz „Zápis do Shopify“).
-5. Testovací režim: hlavička `X-Test: 1` → validace a odpověď jako naostro, ale v Shopify nic naostro
-   nevzniká (nic, nebo jen koncept se štítkem `test`).
-6. Idempotence podle `id`: stejný `POST` dvakrát nesmí v Shopify založit dvě objednávky.
-
-Tělo požadavků i odpovědí: `application/json; charset=utf-8` (čeština a emoji musí projít).
+- Endpoint, kam bot pošle JSON níže (`POST`), a endpoint pro změnu stavu (`PATCH`) – adresy a cesty dle vás.
+- Ověření tokenem v hlavičce `Authorization: Bearer <token>`.
+- Když stejné `id` přijde dvakrát (bot po výpadku posílá znovu), nesmí vzniknout dvě objednávky.
+- Odpověď s číslem objednávky v Shopify, ať ho bot ukáže v dashboardu.
 
 ## `POST /objednavky`
 
@@ -97,7 +87,7 @@ Tělo požadavků i odpovědí: `application/json; charset=utf-8` (čeština a e
 { "stav": "zruseno", "duvod": "zákazník si to rozmyslel" }
 ```
 
-Odpověď `200 OK` se stejným tělem jako u založení; neznámé `id` → `404`.
+Odpověď ideálně stejná jako u založení.
 
 ## Chyby
 
@@ -109,23 +99,6 @@ Odpověď `200 OK` se stejným tělem jako u založení; neznámé `id` → `404
 | `409` | Stejné `id`, jiný obsah | `{"ok": false, "chyba": "...", "shopify_name": "#1042"}` |
 | `5xx` | Server / Shopify nedostupné | Bot opakuje: 1, 5, 15, 60 min, pak po hodině, max 2 dny |
 
-## Zápis do Shopify
-
-Návrh – uprav podle toho, jak je obchod nastavený:
-
-- **Objednávka:** `orderCreate` (nebo `draftOrderCreate` + dokončení). Jedna řádková položka na každý motiv
-  s názvem např. „LED lampička – BMW + jméno Raďa“ a cenou z objednávky.
-- **Produkt:** jeden obecný produkt „LED lampička na zakázku“ (např. SKU `LAMP-15`), motiv v názvu/vlastnostech položky.
-  Pokud produkt neexistuje, založ ho (nebo použij custom line item).
-- **Doprava:** shipping line „Zásilkovna“ / „PPL“ s cenou `doprava.cena`. Výdejní místo zapiš tak, jak ho potřebuje
-  aplikace Zásilkovny / PPL v obchodě (adresa, poznámka nebo metafield).
-- **Zákazník:** najít podle e-mailu, jinak založit.
-- **Platba:** finanční stav `pending`. Na zaplaceno ji přepíná Theodor ručně.
-- **Štítky:** `lampicky`, `messenger`. Do poznámky ID od bota a jméno na Facebooku.
-- **Stav `vyrobeno`:** štítek `vyrobeno`.
-- **Stav `odeslano`:** fulfillment s číslem zásilky a dopravcem.
-- **Stav `zruseno`:** zrušit objednávku v Shopify (bez refundu – platby řeší Theodor).
-
 ## Bezpečnost
 
 - Jen HTTPS. Token nikdy do gitu ani do logů.
@@ -134,11 +107,7 @@ Návrh – uprav podle toho, jak je obchod nastavený:
 
 ## Co vrátit zpět Theodorovi
 
-1. Základní URL API (produkční + jak zapnout testovací režim).
+1. Adresu endpointu pro založení a pro změnu stavu (případně testovací režim).
 2. Token – předat bezpečně (ne v čitelném e-mailu ani v gitu).
-3. Případné změny formátu oproti tomuto dokumentu (stačí upravená ukázka JSON).
-4. Jak se v Shopify zapsala testovací objednávka (číslo `#…`) a jak se v ní zobrazuje výdejní místo.
-5. Odpověď na otázku: mají se obrázky návrhů nahrávat na server (např. `POST /navrhy` → URL)?
-
-Otevřené rozhodnutí na straně Theodora: zda objednávku zakládat už při stavu `domluveno`, nebo až při
-`vyrobeno` / `odeslano`. API výše funguje pro všechny varianty.
+3. Změny formátu oproti tomuto dokumentu, pokud nějaké chcete (stačí upravená ukázka JSON) – bot se přizpůsobí.
+4. Tvar odpovědi, pokud se liší od ukázky výše.
