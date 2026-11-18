@@ -16,6 +16,10 @@ Co sis označil(a) „Nepotřebuje odpověď“ a jak daleko je která objednáv
 
 import csv
 import json
+import os
+import time as _time
+os.environ['TZ'] = 'Europe/Prague'  # český čas i na Macu v jiném pásmu
+_time.tzset()
 import re
 import subprocess
 import time

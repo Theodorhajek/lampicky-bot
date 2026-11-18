@@ -24,6 +24,9 @@ from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# vždy český čas – Mac může být v jiném pásmu (cestování); noční pauza, denní limit i logy jedou podle Prahy
+os.environ["TZ"] = "Europe/Prague"
+time.tzset()
 ADB_DIR = Path.home() / ".local" / "android" / "platform-tools"
 os.environ["PATH"] = f"{ADB_DIR}{os.pathsep}{os.environ['PATH']}"
 
@@ -980,7 +983,20 @@ def main():
     next_comments = 0  # hned po startu jednou projít komentáře
     failures = 0
     offline_since = None
+    off_logged = False
     while True:
+        if in_off_hours():
+            if not off_logged:
+                start, end = CONFIG.get("offHours", ["01:15", "05:50"])
+                print(f"[{datetime.now():%H:%M:%S}] noční pauza (český čas {start}–{end}) – bot spí", flush=True)
+                log("bot", "noční pauza", f"{start}–{end}")
+                off_logged = True
+            time.sleep(60)
+            continue
+        if off_logged:
+            print(f"[{datetime.now():%H:%M:%S}] konec noční pauzy – jedu", flush=True)
+            off_logged = False
+            next_chats = next_requests = next_comments = 0  # dohnat, co přišlo přes noc
         try:
             # bez internetu v telefonu nechodí zprávy ani nejde nic odeslat – počkat a dát vědět
             if not phone_online():
@@ -1161,6 +1177,15 @@ def wait_for_phone(seconds):
             return True
         time.sleep(3)
     return False
+
+
+def in_off_hours():
+    """Noční pauza (config offHours, český čas) – bot v ní nedělá vůbec nic, ani neodpovídá."""
+    start, end = CONFIG.get("offHours", ["01:15", "05:50"])
+    to_min = lambda t: int(t.split(":")[0]) * 60 + int(t.split(":")[1])
+    now = datetime.now().hour * 60 + datetime.now().minute
+    a, b = to_min(start), to_min(end)
+    return (now >= a or now < b) if a > b else a <= now < b
 
 
 def in_quiet_hours():
