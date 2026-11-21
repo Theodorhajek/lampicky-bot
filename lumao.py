@@ -233,11 +233,54 @@ def group_of(person):
         return ""
 
 
+# ---------- výdejní místa Zásilkovny (veřejný seznam přes klíč API, obnova jednou denně) ----------
+
+def _points():
+    f = HERE / "data" / "zasilkovna_mista.json"
+    if not f.exists() or time.time() - f.stat().st_mtime > 86400:
+        key = env().get("ZASILKOVNA_API_KEY")
+        if not key:
+            return []
+        r = requests.get(f"https://pickup-point.api.packeta.com/v5/{key}/branch/json?lang=cs", timeout=120)
+        r.raise_for_status()
+        d = r.json()
+        items = d.get("data", d) if isinstance(d, dict) else d
+        items = list(items.values()) if isinstance(items, dict) else items
+        keep = [{k: b.get(k) for k in ("id", "name", "place", "street", "city", "zip")} for b in items if b.get("country") == "cz"]
+        f.write_text(json.dumps(keep, ensure_ascii=False))
+    return json.loads(f.read_text())
+
+
+def find_point(*texts):
+    """Najde výdejní místo Zásilkovny podle textu od zákazníka (název, ulice, město). Vrátí dict nebo None."""
+    import unicodedata  # noqa: PLC0415
+    fold = lambda s: unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    q = fold(" ".join(t for t in texts if t))
+    words = set(re.findall(r"[a-z0-9]{3,}", q))
+    best, score = None, 0
+    for b in _points():
+        hay = fold(f"{b['name']} {b['place']} {b['street']} {b['city']} {b['zip']}")
+        sc = sum(1 for w in words if w in hay)
+        if fold(b["city"]) in q:
+            sc += 2
+        if sc > score:
+            best, score = b, sc
+    return best if score >= 3 else None
+
+
 def to_payload(o, group, fb_name):
     d = {"dopravce": o["dopravce"], "typ": o["typ"], "ulice": o["ulice"], "psc": re.sub(r"\D", "", o["psc"]),
          "mesto": o["mesto"], "zeme": "CZ"}
     if o["typ"] == "vydejni_misto":
         d.update({"id_mista": o["id_mista"], "nazev_mista": o["nazev_mista"]})
+        if o["dopravce"] == "zasilkovna" and not o["id_mista"]:
+            try:
+                pt = find_point(o["nazev_mista"], o["ulice"], o["mesto"], o["psc"])
+            except Exception:  # noqa: BLE001
+                pt = None
+            if pt:
+                d.update({"id_mista": str(pt["id"]), "nazev_mista": pt["place"] or pt["name"], "ulice": pt["street"],
+                          "psc": re.sub(r"\D", "", pt["zip"] or ""), "mesto": pt["city"]})
     p = {"skupina": group or "Messenger",
          "zakaznik": {"jmeno": o["jmeno"] or fb_name, "telefon": o["telefon"], "email": o["email"]},
          "doruceni": d,
@@ -280,8 +323,10 @@ def draft_from_conversation(person, transcript, claude_path, model):
     payload = to_payload(o, group_of(person), person)
     files = pngs_for(person, o["polozky"]) if o["polozky"] else []
     note = "" if o["complete"] else f"Chybí: {o['missing']}"
-    if o["typ"] == "vydejni_misto" and not o["id_mista"]:
+    if o["typ"] == "vydejni_misto" and not payload["doruceni"].get("id_mista"):
         note = (note + "; " if note else "") + "doplň ID výdejního místa"
+    elif o["typ"] == "vydejni_misto" and not o["id_mista"]:
+        note = (note + "; " if note else "") + f"výdejní místo dohledáno: {payload['doruceni']['nazev_mista']} – zkontroluj"
     return add_draft(person, payload, files, note)
 
 
