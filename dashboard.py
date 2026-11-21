@@ -1976,6 +1976,91 @@ def api_odeslani(oid):
 
 # ====================================================================== Objednávky
 
+def server_orders_html():
+    """Objednávky pro server Lumao → Shopify: koncept od bota, test, odeslání, stav."""
+    try:
+        import lumao  # noqa: PLC0415
+        rs = lumao.rows()
+    except Exception as e:  # noqa: BLE001
+        return f'<div class="card empty"><b>Server Lumao</b>Nejde načíst: {h(str(e))}</div>'
+    if not rs:
+        return ""
+    out = f'<h2>Do Shopify (server Lumao) <span class="cnt">{len(rs)}</span></h2>'
+    for rid, ts, person, oid, payload, files, status, shop, sstate, track, err, test in rs:
+        imgs = ""
+        for f in json.loads(files or "[]"):
+            try:
+                rel = Path(f).resolve().relative_to(HERE)
+                imgs += f'<a href="/foto?p={quote(str(rel))}" target="_blank"><img src="/foto?p={quote(str(rel))}" alt="návrh" style="width:110px;border:1px solid var(--line);border-radius:8px;background:#fff"></a>'
+            except (ValueError, OSError):
+                imgs += '<span class="small">obrázek mimo složku</span>'
+        tone = {"koncept": "ja", "chyba": "zak", "k_odeslani": "info", "zapsano": "ok"}.get(status, "")
+        state = lumao.STATES.get(status, status)
+        if status == "zapsano":
+            state += f" {shop}" + (f" · {lumao.SERVER_STATES.get(sstate, sstate)}" if sstate else "") + (f" · zásilka {track}" if track else "")
+        tinfo = ""
+        if test:
+            try:
+                tr = json.loads(test)
+                nh = tr.get("nahled") or {}
+                tinfo = (f'<div class="small" style="margin-top:6px">Test: {h(tr.get("zprava") or tr.get("chyba") or "")}'
+                         + (f' – {h(", ".join(str(x.get("nazev")) + " ×" + str(x.get("pocet")) for x in nh.get("polozky") or []))}, '
+                            f'{h((nh.get("doprava") or {}).get("nazev", ""))}, {h(nh.get("platba", ""))}, {nh.get("castka_v_shopify", "")} Kč'
+                            if nh else "") + '</div>')
+            except ValueError:
+                pass
+        editable = status in ("koncept", "chyba")
+        acts = ""
+        if editable:
+            acts = ('<button class="btn ghost sm" name="do" value="ulozit">Uložit</button>'
+                    '<button class="btn ghost sm" name="do" value="test">Zkusit (test)</button>'
+                    '<button class="btn pri" name="do" value="poslat">Poslat do Shopify</button>'
+                    '<button class="btn ghost sm" name="do" value="zahodit">Zahodit</button>')
+        out += (f'<article class="card {tone}"><div class="ch"><a class="nml" href="{conv_url(person)}">{h(person)}</a>'
+                f'<span class="chip {tone}">{h(state)}</span><span class="right small">{h(oid)} · {h(ago(ts))}</span></div>'
+                + (f'<div class="why">{h(err)}</div>' if err else "")
+                + f'<form method="post" action="/server-objednavka"><input type="hidden" name="id" value="{rid}"><input type="hidden" name="next" value="/objednavky">'
+                f'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">{imgs}</div>'
+                + (f'<details class="fold" {"open" if status == "koncept" else ""}><summary>Údaje objednávky</summary>'
+                   f'<textarea name="payload" rows="14" style="width:100%;font-family:monospace;font-size:12px" {"" if editable else "readonly"}>{h(payload)}</textarea>'
+                   '<div class="small">podstavec: barevny / tepla_bila · platba: dobirka / prevod / hotove · dopravce: zasilkovna / ppl · '
+                   'typ: vydejni_misto (nutné id_mista) / adresa · cena dopravy se neposílá</div></details>')
+                + tinfo + (f'<div class="acts" style="margin-top:8px">{acts}</div>' if acts else "") + '</form></article>')
+    return out
+
+
+@app.route("/server-objednavka", methods=["POST"])
+def server_objednavka():
+    if not same_origin():
+        return deny()
+    import lumao  # noqa: PLC0415
+    try:
+        rid = int(request.form.get("id") or 0)
+        act = request.form.get("do")
+        if act == "zahodit":
+            with lumao.db() as con:
+                con.execute("UPDATE server_orders SET status='zahozeno' WHERE id=? AND status IN ('koncept','chyba')", (rid,))
+            return back("Objednávka zahozena")
+        raw = request.form.get("payload")
+        if raw is not None:
+            try:
+                payload = json.loads(raw)
+            except ValueError as e:
+                return back(f"Údaje nejsou platný JSON: {e}")
+            with lumao.db() as con:
+                con.execute("UPDATE server_orders SET payload=? WHERE id=? AND status IN ('koncept','chyba')",
+                            (json.dumps(payload, ensure_ascii=False, indent=1), rid))
+        if act == "test":
+            ok, msg = lumao.send(rid, test=True)
+            return back(("Test prošel: " if ok else "Test neprošel: ") + msg)
+        if act == "poslat":
+            ok, msg = lumao.send(rid)
+            return back(("Odesláno – " if ok else "Neodesláno – ") + msg)
+        return back("Uloženo")
+    except Exception as e:  # noqa: BLE001
+        return back(f"Nepovedlo se: {e}"[:120])
+
+
 @app.route("/objednavky")
 def objednavky():
     allo = orders()
@@ -1983,6 +2068,7 @@ def objednavky():
     done = sorted([o for o in allo if o["step"] == "odeslano"], key=lambda o: -(o["step_ts"] or 0))
     body = ('<h1>Objednávky</h1><p class="lead">Konverzace, kde bot domluvil všechno potřebné (motiv, doprava, platba). '
             'Posouvej je tlačítkem: domluveno → vyrobeno → odesláno.</p>')
+    body += server_orders_html()
     body += "".join(order_html(o, "/objednavky") for o in open_) or \
         '<div class="card empty"><b>Žádná rozpracovaná objednávka</b>Až bot nějakou domluví, objeví se tady.</div>'
     if done:

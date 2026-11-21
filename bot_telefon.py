@@ -401,9 +401,10 @@ REPLY_SCHEMA = {
         "design": {"type": "string"},
         "design_text": {"type": "string"},
         "handoff": {"type": "boolean"},
+        "order_ready": {"type": "boolean"},
         "note": {"type": "string"},
     },
-    "required": ["action", "messages", "photo", "design", "design_text", "handoff", "note"],
+    "required": ["action", "messages", "photo", "design", "design_text", "handoff", "order_ready", "note"],
     "additionalProperties": False,
 }
 
@@ -446,6 +447,7 @@ Pravidla:
 - Pokud se zákazník jakkoli ptá na autorská práva, licenci, ochrannou známku nebo povolení používat logo/značku (např. „máte povolení to logo používat?"), dej action="block", messages=[] a handoff=false – prodejce takového člověka blokuje a nic mu neodpovídá.
 - „[fotka]" znamená, že zákazník poslal obrázek (nevidíš ho) – poděkuj a ber to jako dodanou fotku.
 - Vidíš jen posledních pár zpráv konverzace. Pokud chybí kontext, ptej se opatrně nebo předej (handoff=true).
+- order_ready=true, když má objednávka v konverzaci všechny údaje (jméno, telefon, doprava s adresou nebo výdejním místem, způsob platby, motiv a počet kusů) – bot z ní připraví koncept pro server. Jinak false.
 - note: jedna krátká věta pro prodejce, co se v konverzaci děje (např. „chce lampičku s E46, čeká na platbu").
 
 LEKCE Z OPRAV PRODEJCE (mají přednost před vším ostatním):
@@ -579,6 +581,14 @@ def handle_thread(conv):
             log(name, "NÁVRH (neodesláno)", msg)
     else:
         log(name, "bez odpovědi", answer.get("note", ""))
+    if answer.get("order_ready") and SEND:
+        try:
+            import lumao  # noqa: PLC0415
+            if lumao.draft_from_conversation(name, transcript(messages), CONFIG["claudePath"], CONFIG["model"]):
+                log(name, "OBJEDNÁVKA – KONCEPT", "zkontroluj a pošli do Shopify v dashboardu (Objednávky)")
+                notify("Lampičky – objednávka ke kontrole", f"{name}: koncept je v dashboardu")
+        except Exception as e:  # noqa: BLE001
+            log(name, "OBJEDNÁVKA – CHYBA KONCEPTU", str(e)[:200])
     if answer.get("handoff"):
         t["handedOff"] = SEND
         notify("Lampičky – potřebuju tě", f"{name}: {answer.get('note', '')}")
@@ -997,6 +1007,11 @@ def main():
             print(f"[{datetime.now():%H:%M:%S}] konec noční pauzy – jedu", flush=True)
             off_logged = False
             next_chats = next_requests = next_comments = 0  # dohnat, co přišlo přes noc
+        try:  # objednávky na server Lumao: dopsat po výpadku, zjistit stav (nepotřebuje telefon)
+            import lumao  # noqa: PLC0415
+            lumao.tick(notify)
+        except Exception as e:  # noqa: BLE001
+            print(f"[{datetime.now():%H:%M:%S}] server Lumao: {e}", flush=True)
         try:
             # bez internetu v telefonu nechodí zprávy ani nejde nic odeslat – počkat a dát vědět
             if not phone_online():
