@@ -10,6 +10,7 @@ Bot běží na Macu a ovládá telefon (Redmi, adb): odpovídá v Messengeru, po
 
 ## Pravidla (Theodorova, platí vždy)
 - Zákazníkům nic nepiš bez jeho výslovného „pošli“ (nebo tlačítka Poslat). Do Shopify naostro (`poslat-objednavku`) jen po jeho „ano“.
+- Automaticky (config `autoObjednavky`) odchází jen úplný koncept s jednoznačným výdejním místem, bez návrhu na míru, zaplacený (převod = celá částka, dobírka = poštovné). Ostatní koncepty čekají na Theodora.
 - Když nevíš, nic nepiš a zeptej se ho. Nikdy nepiš „potvrdím“, „zjistím“, „ozvu se“.
 - Styl odpovědí: krátce (1 věta, max 2–3 krátké zprávy), vykat (tykat jen tomu, kdo tyká nebo píše „Ahoj“), jen emoji 🙂,
   na potvrzení „OK“ / „Rozumím.“ (nikdy „Rozumím, děkuji“), nepotvrzovat města („pošlu kamkoliv v ČR/SK“), víc kusů = 690 × počet, doprava jednou.

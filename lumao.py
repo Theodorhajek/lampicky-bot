@@ -161,8 +161,49 @@ def status(oid):
         return r.status_code, {}
 
 
+def auto_ready(row_id):
+    """Smí koncept odejít sám? Úplný (bez poznámky), jednoznačné výdejní místo, ne návrh na míru, a zaplaceno:
+    převod = spárované platby pokryjí zboží + dopravu, dobírka = zaplacené poštovné. Vrátí (ano, důvod)."""
+    import platby  # noqa: PLC0415
+    with db() as con:
+        person, payload, note = con.execute("SELECT person, payload, coalesce(error,'') FROM server_orders WHERE id=?",
+                                            (row_id,)).fetchone()
+    if note.strip():
+        return False, note
+    p = json.loads(payload)
+    if any(re.search(r"(?i)jméno|nápis", i.get("motiv", "")) for i in p.get("polozky") or []):
+        return False, "návrh na míru"
+    paid = sum(a for a, _ in platby.paid_by(person))
+    zpusob = (p.get("platba") or {}).get("zpusob")
+    goods = sum(i.get("pocet", 1) * i.get("cena_ks", 0) for i in p.get("polozky") or [])
+    if zpusob == "prevod":
+        need = goods + (p.get("doprava_cena") or 85)
+        return (paid >= need, f"zaplaceno {paid:.0f} z {need} Kč")
+    if zpusob == "dobirka":
+        return (paid >= 85, f"poštovné {'zaplaceno' if paid >= 85 else 'zatím nezaplaceno'}")
+    return False, "platba hotově – ručně"
+
+
 def tick(notify=None):
-    """Z hlavní smyčky bota: dopošle objednávky po výpadku a jednou za 20 min zjistí jejich stav."""
+    """Z hlavní smyčky bota: dopošle objednávky po výpadku, zaplacené koncepty pošle samo (config autoObjednavky)
+    a jednou za 20 min zjistí stav."""
+    try:
+        auto = json.loads((HERE / "config.json").read_text()).get("autoObjednavky", False)
+    except (OSError, ValueError):
+        auto = False
+    if auto:
+        with db() as con:
+            drafts = con.execute("SELECT id, person FROM server_orders WHERE status='koncept'").fetchall()
+        for rid, person in drafts:
+            try:
+                ok_, why = auto_ready(rid)
+            except Exception:  # noqa: BLE001
+                continue
+            if ok_:
+                ok, msg = send(rid)
+                if notify:
+                    notify("Lampičky – objednávka odeslána sama" if ok else "Lampičky – objednávka se neodeslala",
+                           f"{person}: {msg} ({why})")
     with db() as con:
         waiting = con.execute("SELECT id, person FROM server_orders WHERE status='k_odeslani'").fetchall()
         due = con.execute("SELECT id, oid, person, server_state FROM server_orders WHERE status='zapsano' "
@@ -277,15 +318,19 @@ def find_point(*texts):
     fold = lambda s: unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
     q = fold(" ".join(t for t in texts if t))
     words = set(re.findall(r"[a-z0-9]{3,}", q))
-    best, score = None, 0
+    best, score, second = None, 0, 0
     for b in _points():
         hay = fold(f"{b['name']} {b['place']} {b['street']} {b['city']} {b['zip']}")
         sc = sum(1 for w in words if w in hay)
         if fold(b["city"]) in q:
             sc += 2
         if sc > score:
-            best, score = b, sc
-    return best if score >= 3 else None
+            best, score, second = b, sc, score
+        elif sc > second:
+            second = sc
+    if score < 3:
+        return None
+    return dict(best, jisty=score >= 4 and score > second)  # jisty = jednoznačná shoda (jen pak jde objednávka sama)
 
 
 def to_payload(o, group, fb_name):
@@ -300,7 +345,7 @@ def to_payload(o, group, fb_name):
                 pt = None
             if pt:
                 d.update({"id_mista": str(pt["id"]), "nazev_mista": pt["place"] or pt["name"], "ulice": pt["street"],
-                          "psc": re.sub(r"\D", "", pt["zip"] or ""), "mesto": pt["city"]})
+                          "psc": re.sub(r"\D", "", pt["zip"] or ""), "mesto": pt["city"], "_jisty": pt.get("jisty", False)})
     p = {"skupina": group or "Messenger",
          "datum": time.strftime("%Y-%m-%d"),
          "zakaznik": {"jmeno": o["jmeno"] or fb_name, "telefon": o["telefon"], "email": o["email"], "facebook": fb_name},
@@ -343,9 +388,11 @@ def draft_from_conversation(person, transcript, claude_path, model):
     payload = to_payload(o, group_of(person), person)
     files = pngs_for(person, o["polozky"]) if o["polozky"] else []
     note = "" if o["complete"] else f"Chybí: {o['missing']}"
+    if any(i.get("text") for i in o["polozky"]):
+        note = (note + "; " if note else "") + "návrh na míru (jméno/nápis) – zkontroluj obrázek"
     if o["typ"] == "vydejni_misto" and not payload["doruceni"].get("id_mista"):
         note = (note + "; " if note else "") + "doplň ID výdejního místa"
-    elif o["typ"] == "vydejni_misto" and not o["id_mista"]:
+    elif o["typ"] == "vydejni_misto" and not o["id_mista"] and not payload["doruceni"].pop("_jisty", False):
         note = (note + "; " if note else "") + f"výdejní místo dohledáno: {payload['doruceni']['nazev_mista']} – zkontroluj"
     return add_draft(person, payload, files, note)
 
