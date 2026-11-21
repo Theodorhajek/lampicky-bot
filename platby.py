@@ -35,10 +35,15 @@ def db():
 
 
 def config():
+    """Účet lampiček je v .env (PLATBY_UCET), ne v configu – repo je veřejné."""
     try:
-        return json.loads((HERE / "config.json").read_text())
+        cfg = json.loads((HERE / "config.json").read_text())
     except (OSError, ValueError):
-        return {}
+        cfg = {}
+    for line in (HERE / ".env").read_text().splitlines() if (HERE / ".env").exists() else []:
+        if line.startswith("PLATBY_UCET="):
+            cfg["platbyUcet"] = line.split("=", 1)[1].strip()
+    return cfg
 
 
 def gmail(*args):
@@ -66,8 +71,35 @@ def parse(body):
             "booked": get(r"Datum zaúčtování:\s*(\S+)"), "code": get(r"Kód transakce:\s*(\S+)")}
 
 
+def fetch_server():
+    """Platby ze serveru Lumao (čte stejná upozornění Air Bank). id je stálé → msgid „srv:<id>“."""
+    import lumao  # noqa: PLC0415
+    import requests  # noqa: PLC0415
+    acc = (config().get("platbyUcet") or "").strip()
+    od = time.strftime("%Y-%m-%d", time.localtime(time.time() - 45 * 86400))
+    r = requests.get(lumao.url().rsplit("/", 1)[0] + "/platby", params={"od": od}, headers=lumao.headers(), timeout=30)
+    r.raise_for_status()
+    new = []
+    with db() as con:
+        known = {x[0] for x in con.execute("SELECT msgid FROM payments")}
+        have = {(x[0], x[1]) for x in con.execute("SELECT code, amount FROM payments WHERE code<>''")}
+        for p in r.json().get("platby") or []:
+            mid = f"srv:{p['id']}"
+            if mid in known or (p.get("kod_transakce") and (p["kod_transakce"], float(p["castka"])) in have):
+                continue  # už máme (i z mailu)
+            row = {"account": "lampicky", "account_no": acc, "amount": float(p["castka"]), "sender": p.get("jmeno") or "",
+                   "sender_acc": p.get("ucet") or "", "vs": p.get("vs") or "", "message": p.get("zprava") or "",
+                   "booked": p.get("datum") or "", "code": p.get("kod_transakce") or ""}
+            con.execute("INSERT OR IGNORE INTO payments(msgid, ts, account, account_no, amount, sender, sender_acc, vs, message, "
+                        "booked, code) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (mid, time.time(), row["account"], acc, row["amount"], row["sender"], row["sender_acc"], row["vs"],
+                         row["message"], row["booked"], row["code"]))
+            new.append(row)
+    return new
+
+
 def fetch():
-    """Načte nová upozornění. Vrátí seznam nových plateb na účet lampiček."""
+    """Načte nová upozornění z mailu. Vrátí seznam nových plateb na účet lampiček."""
     acc = (config().get("platbyUcet") or "").strip()
     if not acc:
         return []  # dokud není nastavený účet lampiček, nic neukládat
@@ -82,6 +114,11 @@ def fetch():
         if not p:
             continue
         ours = acc in (p["account"], p["account_no"])
+        if ours and p["code"]:
+            with db() as con:
+                if con.execute("SELECT 1 FROM payments WHERE code=? AND amount=?", (p["code"], p["amount"])).fetchone():
+                    con.execute("INSERT OR IGNORE INTO payments(msgid, ts, account, person) VALUES (?,?,'jiny','-')", (m["id"], time.time()))
+                    continue  # stejná platba už přišla ze serveru
         with db() as con:
             if ours:
                 con.execute("INSERT OR IGNORE INTO payments(msgid, ts, account, account_no, amount, sender, sender_acc, vs, "
@@ -124,8 +161,8 @@ def match():
     cands = candidates()
     done = []
     with db() as con:
-        rows = con.execute("SELECT id, sender, vs, message, amount FROM payments WHERE person IS NULL AND (account=? OR account_no=?)",
-                           (acc, acc)).fetchall()
+        rows = con.execute("SELECT id, sender, vs, message, amount FROM payments WHERE person IS NULL "
+                           "AND (account=? OR account_no=? OR account='lampicky')", (acc, acc)).fetchall()
     for pid, sender, vs, msg, amount in rows:
         hit = None
         for person, (oid, phone, jmeno) in cands.items():
@@ -144,7 +181,12 @@ def match():
 
 
 def tick(notify=None):
-    new = fetch()
+    new = []
+    try:
+        new += fetch_server()
+    except Exception as e:  # noqa: BLE001
+        print("platby ze serveru:", e, flush=True)
+    new += [p for p in fetch() if (p["code"], p["amount"]) not in {(n["code"], n["amount"]) for n in new}]
     matched = match()
     if notify:
         for p in new:
@@ -157,7 +199,8 @@ def recent(limit=30):
     acc = (config().get("platbyUcet") or "").strip()
     with db() as con:
         return con.execute("SELECT ts, booked, amount, sender, vs, message, person, oid FROM payments "
-                           "WHERE account=? OR account_no=? ORDER BY id DESC LIMIT ?", (acc, acc, limit)).fetchall()
+                           "WHERE account<>'jiny' AND (account=? OR account_no=? OR account='lampicky') ORDER BY id DESC LIMIT ?",
+                           (acc, acc, limit)).fetchall()
 
 
 def paid_by(person):

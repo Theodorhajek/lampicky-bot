@@ -26,7 +26,9 @@ HERE = Path(__file__).resolve().parent
 STATUS_EVERY = 20 * 60
 STATES = {"koncept": "Koncept – zkontroluj", "k_odeslani": "Čeká na odeslání", "zapsano": "Zapsáno v Shopify",
           "chyba": "Chyba – oprav a pošli znovu", "zahozeno": "Zahozeno"}
-SERVER_STATES = {"ceka_na_schvaleni": "čeká na 👍 v Telegramu", "ve_vyrobe": "ve výrobě", "odeslano": "odesláno",
+SERVER_STATES = {"prijato": "ve Skupinách, Shopify zatím ne", "v_shopify": "v Shopify (neodpovídá)",
+                 "ceka_na_schvaleni": "čeká na 👍 v Telegramu", "ve_vyrobe": "ve výrobě", "vyrobeno": "vyrobeno",
+                 "doruceno": "doručeno", "odeslano": "odesláno",
                  "zruseno": "zrušeno"}
 
 SCHEMA = """
@@ -111,6 +113,18 @@ def send(row_id, test=False):
     files = json.loads(files or "[]")
     payload["id_objednavky"] = oid
     payload["test"] = bool(test)
+    pl = payload.setdefault("platba", {})
+    if pl.get("zpusob") == "dobirka":
+        pl["zaplaceno"] = False
+    elif not pl.get("zaplaceno"):
+        try:
+            import platby  # noqa: PLC0415
+            with db() as con:
+                person = con.execute("SELECT person FROM server_orders WHERE id=?", (row_id,)).fetchone()[0]
+            total = sum(i.get("pocet", 1) * i.get("cena_ks", 0) for i in payload.get("polozky") or [])
+            pl["zaplaceno"] = sum(a for a, _ in platby.paid_by(person)) >= total > 0
+        except Exception:  # noqa: BLE001
+            pass
     err = check_files(payload, files)
     if err:
         return False, err
@@ -133,7 +147,7 @@ def send(row_id, test=False):
             con.execute("UPDATE server_orders SET status='zapsano', shopify=?, server_state=?, error='', sent_ts=?, "
                         "tries=? WHERE id=?", (shop, res.get("stav") or "ceka_na_schvaleni", time.time(), tries + 1, row_id))
             return True, f"zapsáno v Shopify {shop}".strip()
-        retry = code >= 500 or res.get("opakovat")
+        retry = code >= 500 or code == 409 or res.get("opakovat")
         con.execute("UPDATE server_orders SET status=?, tries=?, error=? WHERE id=?",
                     ("k_odeslani" if retry and tries < 10 else "chyba", tries + 1, msg[:300], row_id))
     return False, msg + (" – zkusím znovu" if retry else "")
@@ -152,7 +166,7 @@ def tick(notify=None):
     with db() as con:
         waiting = con.execute("SELECT id, person FROM server_orders WHERE status='k_odeslani'").fetchall()
         due = con.execute("SELECT id, oid, person, server_state FROM server_orders WHERE status='zapsano' "
-                          "AND coalesce(server_state,'') NOT IN ('odeslano','zruseno') AND coalesce(checked_ts,0) < ?",
+                          "AND coalesce(server_state,'') NOT IN ('doruceno','zruseno') AND coalesce(checked_ts,0) < ?",
                           (time.time() - STATUS_EVERY,)).fetchall()
     for rid, person in waiting:
         ok, msg = send(rid)
@@ -164,6 +178,10 @@ def tick(notify=None):
         except requests.RequestException:
             continue
         st = res.get("stav") or old
+        if st == "prijato":
+            with db() as con:
+                con.execute("UPDATE server_orders SET status='k_odeslani', checked_ts=? WHERE id=?", (time.time(), rid))
+            continue
         zs = res.get("zasilky") or []  # seznam zásilek; číslo pod cislo / cislo_zasilky / tracking (podle serveru)
         track = ", ".join(str(z.get("cislo") or z.get("cislo_zasilky") or z.get("tracking") or z) if isinstance(z, dict) else str(z)
                           for z in zs) or res.get("cislo_zasilky") or ""
@@ -284,13 +302,13 @@ def to_payload(o, group, fb_name):
                 d.update({"id_mista": str(pt["id"]), "nazev_mista": pt["place"] or pt["name"], "ulice": pt["street"],
                           "psc": re.sub(r"\D", "", pt["zip"] or ""), "mesto": pt["city"]})
     p = {"skupina": group or "Messenger",
-         "zakaznik": {"jmeno": o["jmeno"] or fb_name, "telefon": o["telefon"], "email": o["email"]},
+         "datum": time.strftime("%Y-%m-%d"),
+         "zakaznik": {"jmeno": o["jmeno"] or fb_name, "telefon": o["telefon"], "email": o["email"], "facebook": fb_name},
          "doruceni": d,
          "polozky": [{"motiv": " + ".join(x for x in (i["motiv"], f"jméno {i['text']}" if i["text"] else "") if x),
                       "pocet": max(1, i["pocet"]), "cena_ks": i["cena_ks"] or 690, "podstavec": i["podstavec"]}
                      for i in o["polozky"]],
-         "platba": {"zpusob": o["zpusob"]},
-         "facebook": fb_name}
+         "platba": {"zpusob": o["zpusob"], "zaplaceno": False}}
     if o["poznamka"]:
         p["poznamka"] = o["poznamka"]
     return p
@@ -343,11 +361,11 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "seznam"
     if cmd == "test":
         f = HERE / "navrhy" / "zakaznici" / "zdenka-bmw-rada-3.png"
-        payload = {"skupina": "Test bota", "zakaznik": {"jmeno": "Test Bot", "telefon": "+420777000000", "email": "test@example.cz"},
+        payload = {"skupina": "Test bota", "zakaznik": {"jmeno": "Test Bot", "telefon": "+420777000000", "email": "test@example.cz", "facebook": "Test Bot"},
                    "doruceni": {"dopravce": "zasilkovna", "typ": "vydejni_misto", "id_mista": "12345", "nazev_mista": "Z-BOX Přerov",
                                 "ulice": "Čechova 12", "psc": "75002", "mesto": "Přerov", "zeme": "CZ"},
                    "polozky": [{"motiv": "BMW + jméno Raďa", "pocet": 1, "cena_ks": 690, "podstavec": "barevny"}],
-                   "platba": {"zpusob": "dobirka"}, "facebook": "Test Bot", "poznamka": "ZKUŠEBNÍ OBJEDNÁVKA BOTA – nic nevyrábět."}
+                   "platba": {"zpusob": "dobirka", "zaplaceno": False}, "doprava_cena": 89, "poznamka": "ZKUŠEBNÍ OBJEDNÁVKA BOTA – nic nevyrábět."}
         payload["id_objednavky"] = "test-bot-" + time.strftime("%Y%m%d-%H%M")
         payload["test"] = True
         code, res = post(payload, [f])
