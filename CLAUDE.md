@@ -16,6 +16,7 @@ Bot běží na Macu a ovládá telefon (Redmi, adb): odpovídá v Messengeru, po
 - Fakta jen z `info.md` a `lekce.md`. Ceny, termíny a atypy rozhoduje Theodor.
 - Osobní údaje zákazníků nikam neposílej a nedávej do gitu (repo je veřejné).
 - Návrhy (obrázky) zákazníkům jen po jeho schválení. Platby si páruje sám (bot je jen ukazuje).
+- K platebním údajům bot vždy pošle i QR platbu (`platba_qr.py`, číslo účtu jen v `.env`). U `lampicky_cli.py napis` se QR přidá samo, když zpráva obsahuje číslo účtu a částku „… Kč“.
 
 ## Soubory
 - `bot_telefon.py` (hlavní smyčka), `fb.py` (komentáře, skupiny), `data.py` (SQLite `data/lampicky.db`), `dashboard.py`,

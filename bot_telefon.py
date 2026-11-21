@@ -473,9 +473,10 @@ REPLY_SCHEMA = {
         "design_text": {"type": "string"},
         "handoff": {"type": "boolean"},
         "order_ready": {"type": "boolean"},
+        "payment_amount": {"type": "integer"},
         "note": {"type": "string"},
     },
-    "required": ["action", "messages", "photo", "design", "design_text", "handoff", "order_ready", "note"],
+    "required": ["action", "messages", "photo", "design", "design_text", "handoff", "order_ready", "payment_amount", "note"],
     "additionalProperties": False,
 }
 
@@ -527,6 +528,7 @@ Pravidla:
 - Pokud se zákazník jakkoli ptá na autorská práva, licenci, ochrannou známku nebo povolení používat logo/značku (např. „máte povolení to logo používat?"), dej action="block", messages=[] a handoff=false – prodejce takového člověka blokuje a nic mu neodpovídá.
 - „[fotka]" znamená, že zákazník poslal obrázek (nevidíš ho) – poděkuj a ber to jako dodanou fotku.
 - Vidíš jen posledních pár zpráv konverzace. Pokud chybí kontext, nic nepiš a předej (action="none", handoff=true).
+- payment_amount: když v této odpovědi posíláš číslo účtu k zaplacení, napiš sem částku v Kč, kterou má zákazník teď poslat (celé předem = zboží + doprava, u dobírky jen doprava) – bot pošle i QR platbu. Jinak 0.
 - order_ready=true, když má objednávka v konverzaci všechny údaje (jméno, telefon, doprava s adresou nebo výdejním místem, způsob platby, motiv a počet kusů) – bot z ní připraví koncept pro server. Jinak false.
 - note: jedna krátká věta pro prodejce, co se v konverzaci děje (např. „chce lampičku s E46, čeká na platbu").
 
@@ -675,6 +677,8 @@ def handle_thread(conv):
                 send_message(m)
             if (answer.get("design") or "").strip():
                 make_proposal(name, answer["design"].strip(), (answer.get("design_text") or "").strip(), messages)
+            if (answer.get("payment_amount") or 0) > 0:
+                send_payment_qr(name, answer["payment_amount"])
             photo = PHOTOS / Path(answer.get("photo") or "").name
             if answer.get("photo") and photo.is_file():
                 time.sleep(random.uniform(3, 6))
@@ -1243,6 +1247,28 @@ def phone_online():
     return False
 
 
+def payment_in_text(text):
+    """Zpráva s číslem účtu → částka k zaplacení (poslední „… Kč“ v textu), jinak 0."""
+    acc = payment_account()
+    if acc not in (text or "") and acc.split("/")[0] not in (text or ""):
+        return 0
+    nums = [int(re.sub(r"\D", "", n)) for n in re.findall(r"(\d[\d\s.]*)\s*Kč", text)]
+    return nums[-1] if nums else 0
+
+
+def send_payment_qr(person, amount):
+    """K platebním údajům vždy i QR platba (SPAYD) – zákazník ji naskenuje v bance."""
+    try:
+        import platba_qr  # noqa: PLC0415
+        f, _ = platba_qr.make(amount, f"{person} lampicka")
+        time.sleep(random.uniform(3, 6))
+        send_photo(f)
+        log(person, "odeslán QR kód k platbě", f"{amount} Kč")
+    except Exception as e:  # noqa: BLE001
+        log(person, "QR KÓD SE NEPOVEDL", str(e)[:200])
+        notify("Lampičky – QR platba se nepovedla", f"{person}: {amount} Kč – pošli ručně ({e})"[:200])
+
+
 def make_proposal(person, motif, label, messages):
     """Vytvoří černobílý návrh (motiv + jméno) a dá ho do dashboardu ke schválení. Pošle se až po schválení."""
     try:
@@ -1305,6 +1331,9 @@ def process_outbox():
                     if i:
                         time.sleep(random.uniform(2, 5))
                     send_message(part.strip())
+                amount = payment_in_text(text)
+                if amount:
+                    send_payment_qr(person, amount)
                 t["pausedUntil"] = (time.time() + CONFIG["pauseAfterManualReplyHours"] * 3600) * 1000  # píšeš ty – bot mlčí
                 data.save_conversation(person, read_messages(), t["botSent"])
                 log(person, "odesláno z dashboardu", text)
