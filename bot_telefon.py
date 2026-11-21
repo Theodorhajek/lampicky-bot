@@ -733,6 +733,14 @@ def ask_claude_comment(item):
     return out["structured_output"]
 
 
+def messenger_waiting(base):
+    """Přišla od `base` nová zpráva v Messengeru (ne systémová)?"""
+    try:
+        return any(not k.startswith("Messenger|") for k in messenger_notifications() - base)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def check_comments():
     """Projde upozornění na komentáře pod mými příspěvky, otevře příspěvek a vyřídí komentáře, na které ještě
     nikdo neodpověděl (bot ani ty ručně). Odpovědi pod komentáře napíše hned, zprávy do Messengeru až potom."""
@@ -747,7 +755,12 @@ def check_comments():
     # co už je vyřízené, si bot pamatuje (comments), takže nikomu neodpoví dvakrát
     stale = lambda k: not isinstance(seen.get(k), (int, float)) or time.time() - seen[k] > 6 * 3600
     todo = [n for i, n in enumerate(notifs) if n["key"] not in seen or (i < 6 and stale(n["key"]))]
+    base = messenger_notifications()
     for notif in todo:
+        if messenger_waiting(base):  # zákazník v Messengeru má přednost – zbytek komentářů příště (za pár minut)
+            log("komentáře", "přerušeno – přišla zpráva v Messengeru")
+            check_comments.interrupted = True
+            break
         fb.open_notification(notif["key"])
         all_comments = fb.read_post_comments()
         try:
@@ -824,6 +837,13 @@ def check_comments():
                 comment_error(name, c["text"], e)
         retry = state.setdefault("dmRetry", [])
         retry += [{"key": notif["key"], "name": c["name"], "first": c["first"], "dm": dm, "tries": 0} for c, dm in dms]
+        if messenger_waiting(base):
+            if SEND and not failed:
+                seen[notif["key"]] = time.time()
+                save_state()
+            log("komentáře", "přerušeno – přišla zpráva v Messengeru")
+            check_comments.interrupted = True
+            return
         if SEND and not failed:
             seen[notif["key"]] = time.time()
             save_state()
@@ -1125,6 +1145,10 @@ def main():
             seen_notifs = notifs
             if new:
                 print(f"[{datetime.now():%H:%M:%S}] upozornění: {'; '.join(sorted(new))[:150]}", flush=True)
+                for k in new:
+                    who = k.split("|", 1)[0]
+                    if who and who in state.get("threads", {}):
+                        state["threads"][who]["preview"] = ""  # náhled se nemusí změnit (např. po reakci) – projít znovu
             quiet = in_quiet_hours()
             if new or (now >= next_chats and not quiet):
                 time.sleep(random.uniform(3, 10))  # jako člověk, co vezme telefon do ruky
@@ -1147,10 +1171,14 @@ def main():
                 if fb_new:
                     print(f"[{datetime.now():%H:%M:%S}] Facebook: {'; '.join(sorted(fb_new))[:150]}", flush=True)
                 time.sleep(random.uniform(3, 10))
+                check_comments.interrupted = False
                 check_comments()
-                next_comments = time.time() + rnd("commentsEveryMinutes", [30, 60])
                 leave_app()
                 seen_fb = facebook_comment_notifications()
+                if check_comments.interrupted:  # zpráva v Messengeru: hned chaty, komentáře dokončit za 3 min
+                    next_comments, next_chats = time.time() + 180, 0
+                    continue
+                next_comments = time.time() + rnd("commentsEveryMinutes", [30, 60])
                 seen_notifs = messenger_notifications()
             if not quiet and run_queue():  # příspěvky do skupin (fronta.json), max 4 za den
                 leave_app()
