@@ -164,7 +164,9 @@ def tick(notify=None):
         except requests.RequestException:
             continue
         st = res.get("stav") or old
-        track = res.get("cislo_zasilky") or (res.get("zasilka") or {}).get("cislo") or ""
+        zs = res.get("zasilky") or []  # seznam zásilek; číslo pod cislo / cislo_zasilky / tracking (podle serveru)
+        track = ", ".join(str(z.get("cislo") or z.get("cislo_zasilky") or z.get("tracking") or z) if isinstance(z, dict) else str(z)
+                          for z in zs) or res.get("cislo_zasilky") or ""
         with db() as con:
             con.execute("UPDATE server_orders SET server_state=?, tracking=coalesce(nullif(?,''),tracking), checked_ts=? "
                         "WHERE id=?", (st, track, time.time(), rid))
