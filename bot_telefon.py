@@ -1013,6 +1013,13 @@ def main():
             lumao.tick(notify)
         except Exception as e:  # noqa: BLE001
             print(f"[{datetime.now():%H:%M:%S}] server Lumao: {e}", flush=True)
+        if time.time() >= getattr(main, "next_payments", 0):  # platby z upozornění Air Bank (jen čtení mailu)
+            main.next_payments = time.time() + 15 * 60
+            try:
+                import platby  # noqa: PLC0415
+                platby.tick(notify)
+            except Exception as e:  # noqa: BLE001
+                print(f"[{datetime.now():%H:%M:%S}] platby: {e}", flush=True)
         try:
             # bez internetu v telefonu nechodí zprávy ani nejde nic odeslat – počkat a dát vědět
             if not phone_online():

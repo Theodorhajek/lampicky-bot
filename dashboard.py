@@ -2009,6 +2009,14 @@ def server_orders_html():
                             if nh else "") + '</div>')
             except ValueError:
                 pass
+        try:
+            import platby  # noqa: PLC0415
+            pays = platby.paid_by(person)
+        except Exception:  # noqa: BLE001
+            pays = []
+        if pays:
+            tinfo += '<div class="small" style="margin-top:6px"><b>Zaplaceno ✓</b> ' + ", ".join(
+                f"{a:,.0f} Kč ({h(b or '')})".replace(",", " ") for a, b in pays) + ' – zkontroluj částku</div>'
         editable = status in ("koncept", "chyba")
         acts = ""
         if editable:
@@ -2027,6 +2035,25 @@ def server_orders_html():
                    'typ: vydejni_misto (nutné id_mista) / adresa · cena dopravy se neposílá</div></details>')
                 + tinfo + (f'<div class="acts" style="margin-top:8px">{acts}</div>' if acts else "") + '</form></article>')
     return out
+
+
+def payments_html():
+    try:
+        import platby  # noqa: PLC0415
+        acc = platby.config().get("platbyUcet")
+        rs = platby.recent(15) if acc else []
+    except Exception as e:  # noqa: BLE001
+        return f'<div class="card empty"><b>Platby</b>Nejde načíst: {h(str(e))}</div>'
+    if not acc:
+        return ('<div class="card empty"><b>Platby z Air Bank</b>Zatím není nastavený účet lampiček '
+                '(config.json → platbyUcet). Jakmile přijde první upozornění, nastavím ho.</div>')
+    out = '<details class="fold" data-k="platby"><summary>Příchozí platby <span class="cnt soft">' + str(len(rs)) + '</span></summary>'
+    for ts, booked, amount, sender, vs, msg, person, oid in rs:
+        who = f'<a class="nml" href="{conv_url(person)}">{h(person)}</a>' if person else '<span class="chip ja">nepřiřazeno</span>'
+        out += (f'<div class="card"><div class="ch"><b>{amount:,.0f} Kč</b>'.replace(",", " ")
+                + f'<span class="small">&nbsp;od {h(sender or "?")}</span><span class="right small">{h(booked or "")}</span></div>'
+                f'<div class="small">{who}{(" · VS " + h(vs)) if vs else ""}{(" · " + h(msg)) if msg else ""}</div></div>')
+    return out + "</details>"
 
 
 @app.route("/server-objednavka", methods=["POST"])
@@ -2069,6 +2096,7 @@ def objednavky():
     body = ('<h1>Objednávky</h1><p class="lead">Konverzace, kde bot domluvil všechno potřebné (motiv, doprava, platba). '
             'Posouvej je tlačítkem: domluveno → vyrobeno → odesláno.</p>')
     body += server_orders_html()
+    body += payments_html()
     body += "".join(order_html(o, "/objednavky") for o in open_) or \
         '<div class="card empty"><b>Žádná rozpracovaná objednávka</b>Až bot nějakou domluví, objeví se tady.</div>'
     if done:
