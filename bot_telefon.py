@@ -480,8 +480,17 @@ REPLY_SCHEMA = {
 }
 
 
+def payment_account():
+    """Číslo účtu pro platby zákazníků – jen v .env (PLATBY_UCET), ne v gitu (repo je veřejné)."""
+    for line in (HERE / ".env").read_text().splitlines() if (HERE / ".env").exists() else []:
+        if line.startswith("PLATBY_UCET="):
+            return line.split("=", 1)[1].strip()
+    return "[číslo účtu doplní prodejce]"
+
+
 def system_prompt():
-    info = (HERE / "info.md").read_text(encoding="utf-8")
+    UCET = payment_account()  # noqa: N806 – dosazuje se do textu níže ({UCET})
+    info = (HERE / "info.md").read_text(encoding="utf-8").replace("{UCET}", UCET)
     lessons = "\n".join(l for l in (HERE / "lekce.md").read_text(encoding="utf-8").splitlines() if l.startswith("- "))
     return f"""Odpovídáš v Messengeru za prodejce ručně dělaných lampiček na zakázku (auta, motorky, loga, cokoliv podle fotky). Zákazníci píšou většinou z Facebook skupin, kde viděli jeho příspěvek.
 
@@ -500,7 +509,7 @@ Jak prodejce typicky píše (drž se jeho stylu a postupu):
 - „Jakou lampičku byste chtěl?" / „Co byste na lampičku chtěl vygravírovat?"
 - „Super, tak mi prosím pošlete adresu výdejního místa, telefonní číslo a e-mail."
 - „Jak s platbou? Budete chtít zaplatit celé předem, nebo jen poštovné a zbytek dám na dobírku?"
-- „Tak vás poprosím o 105 Kč na účet 1508200788/5500. Předem děkuji a dejte vědět, až pošlete."
+- „Tak vás poprosím o 105 Kč na účet {UCET}. Předem děkuji a dejte vědět, až pošlete."
 - Typická odpověď: „Dobrý den, Kawasaki by určitě šlo 🙂 Cena je 690 Kč + doprava." – a dost. Na „chci vidět fotku" stačí „Jasně, pošlu fotku 🙂".
 (Příklady ukazují jen styl – fakta, ceny a podmínky ber výhradně z INFORMACÍ O PRODEJI níže.)
 - Na tykání odpovídá tykáním („Ahoj, …"), jinak vyká. Píše krátce, bez formálních obratů, občas „Díky!", „Super", „Skvělý".
@@ -541,8 +550,26 @@ def transcript(messages):
     return "\n".join(lines)
 
 
+def older_history(name, messages, limit=30):
+    """Starší část konverzace z databáze – na obrazovce telefonu je vidět jen pár posledních zpráv."""
+    try:
+        with data.db() as con:
+            rows = con.execute("SELECT direction, text FROM messages WHERE person=? AND text<>'' ORDER BY id DESC LIMIT ?",
+                               (name, limit + 15)).fetchall()[::-1]
+    except Exception:  # noqa: BLE001
+        return ""
+    visible = {re.sub(r"\W+", "", (m["text"] or "").lower()) for m in messages}
+    first_visible = next((i for i, (_, t) in enumerate(rows) if re.sub(r"\W+", "", t.lower()) in visible), len(rows))
+    older = [(d_, t) for d_, t in rows[:first_visible] if t.strip() and t.strip() != "Blokovat"][-limit:]
+    return "\n".join(f"{'Zákazník' if d_ == 'in' else 'Já'}: {t}" for d_, t in older)
+
+
 def ask_claude(name, messages, late=False, reaction=None):
     prompt = f"Konverzace se zákazníkem ({name}), nejstarší nahoře:\n\n{transcript(messages)}\n\nNapiš další odpověď za mě."
+    older = older_history(name, messages)
+    if older:
+        prompt = (f"Starší část konverzace se zákazníkem ({name}) z mých záznamů – co už se domluvilo (počet kusů, motiv, adresa…) platí:\n"
+                  f"{older}\n\n") + prompt
     if reaction:
         prompt += (f"\n\nZákazník nic nenapsal, jen reagoval {reaction} na moji poslední zprávu (u návrhu/fotky = líbí se mu, souhlasí)."
                    " Pokračuj dalším krokem objednávky (např. shrnutí a platba), nic neopakuj. Když není další krok, action=\"none\".")
