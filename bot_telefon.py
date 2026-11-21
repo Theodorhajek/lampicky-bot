@@ -14,6 +14,9 @@ import os
 import random
 import re
 import subprocess
+import faulthandler
+import signal
+faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1 <pid> → vypíše, kde bot právě je
 import sys
 import tempfile
 import time
@@ -538,8 +541,11 @@ def transcript(messages):
     return "\n".join(lines)
 
 
-def ask_claude(name, messages, late=False):
+def ask_claude(name, messages, late=False, reaction=None):
     prompt = f"Konverzace se zákazníkem ({name}), nejstarší nahoře:\n\n{transcript(messages)}\n\nNapiš další odpověď za mě."
+    if reaction:
+        prompt += (f"\n\nZákazník nic nenapsal, jen reagoval {reaction} na moji poslední zprávu (u návrhu/fotky = líbí se mu, souhlasí)."
+                   " Pokračuj dalším krokem objednávky (např. shrnutí a platba), nic neopakuj. Když není další krok, action=\"none\".")
     commented = data.comments_of(name)
     if commented:
         prompt += f"\n\nTenhle člověk dřív psal komentáře pod mými příspěvky (z toho víš, co chce – neptej se znovu):\n{commented}"
@@ -584,15 +590,20 @@ def handle_thread(conv):
     except Exception as e:  # noqa: BLE001  – databáze nikdy nesmí shodit bota
         print("  (databáze:", e, ")", flush=True)
     last = messages[-1]
+    # reakce zákazníka (❤, 👍…) na naši poslední zprávu/fotku = souhlas → pokračovat dalším krokem
+    react = re.search(r"(?i)reag\w*\s+(\S+)\s+na\s+(vaši|tvoji)", conv.get("preview") or "")
+    reaction = None
 
-    if last["from"] == "me":
+    if last["from"] == "me" and react and (not last["text"] or any(same_text(s, last["text"]) for s in t["botSent"])):
+        reaction = react.group(1)
+    elif last["from"] == "me":
         from_bot = any(same_text(s, last["text"]) for s in t["botSent"])
         if not from_bot and last["text"] and time.time() * 1000 > t["pausedUntil"]:
             t.update(pausedUntil=(time.time() + CONFIG["pauseAfterManualReplyHours"] * 3600) * 1000, botReplies=0, handedOff=False)
             log(name, f"odpověděl jsi ručně – bot tu {CONFIG['pauseAfterManualReplyHours']} h mlčí")
         return
 
-    fingerprint = norm(transcript(messages[-5:]))
+    fingerprint = norm(transcript(messages[-5:]) + (f" reakce {reaction}" if reaction else ""))
     if t["handled"] == fingerprint:
         return
     if t["handedOff"]:
@@ -607,10 +618,10 @@ def handle_thread(conv):
     # chvíli počkat, ať zákazník dopíše a nepůsobí to jako automat
     time.sleep(random.uniform(*CONFIG["replyDelaySeconds"]))
     messages = read_messages()
-    if not messages or messages[-1]["from"] != "them":
+    if not messages or (messages[-1]["from"] != "them" and not reaction):
         return
 
-    answer = ask_claude(name, messages, conv.get("late", False))
+    answer = ask_claude(name, messages, conv.get("late", False), reaction)
     try:
         data.save_decision("messenger", name, transcript(messages[-10:]), answer, answer.get("handoff"), answer.get("note", ""))
     except Exception:  # noqa: BLE001
