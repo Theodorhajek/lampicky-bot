@@ -304,6 +304,8 @@ def join_or_post(group, members, photos, text, answerer=None):
     state = membership()
     if state == "none":
         state = join_open_group(answerer)
+        if state == "member":
+            return "joined", None  # nejdřív jen přidat; příspěvek až při další návštěvě (ne hned po vstupu)
     if state != "member":
         return state, None
     if not d(description="Napište něco…").exists and (d(description="Co prodáváte?").exists or d(text="Co prodáváte?").exists):

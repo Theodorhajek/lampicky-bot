@@ -1039,6 +1039,10 @@ def run_queue():
     elif status == "sell-group":
         job["status"] = "preskoceno-bazar"
         log(job["group"], "bazarová skupina (jen inzeráty s cenou) – přeskakuju")
+    elif status == "joined":  # přidán do veřejné skupiny – příspěvek za 1–2 dny, ať to nevypadá jako spam
+        job["status"] = "ceka-na-clenstvi"
+        job["due"] = time.time() + random.uniform(20, 40) * 3600
+        log(job["group"], "přidal jsem se do skupiny – příspěvek dám za 1–2 dny")
     elif status in ("pending", "none"):
         job["status"] = "ceka-na-clenstvi"
         job["checks"] = job.get("checks", 0) + 1
