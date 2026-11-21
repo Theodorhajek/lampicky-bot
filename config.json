@@ -36,5 +36,6 @@
   "offHours": [
     "01:15",
     "05:50"
-  ]
+  ],
+  "telegram": true
 }

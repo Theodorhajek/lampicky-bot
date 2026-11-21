@@ -64,7 +64,67 @@ def log(name, action, text=""):
     print(f"[{now:%H:%M:%S}] {name} – {action}{': ' + text if text else ''}", flush=True)
 
 
+TG_DIR = Path.home() / "Developer" / "claude-telegram"
+TG_CONTROL = "lampicky:ovladani"  # trvalé vlákno „🪔 Lampičky – ovládání“
+TG_RING = ("potřebuju tě", "převezmi", "ručně", "bez internetu", "zasekl")  # bot neví / čeká na tebe
+
+TG_TASK_PROMPT = """Lampičky – bot potřebuje Theodora. Česky, krátce, na telefon. Pracovní složka = bot (viz CLAUDE.md).
+
+Situace: {title}
+Zákazník: {person}
+Poznámka bota: {text}
+
+1. Přečti konverzaci: `.venv/bin/python lampicky_cli.py konverzace "{person}"`.
+2. Řekni v 1–2 větách, co zákazník chce a proč to bot neví.
+3. Navrhni odpověď přesně ve stylu prodejce (CLAUDE.md, lekce.md). Pokud chybí informace, kterou ví jen Theodor (termín, cena, atyp), zeptej se ho a návrh zatím nepiš.
+4. Konec: návrh odpovědi a řádek `OPTIONS: Poslat | Upravit | Nechat být`.
+Po „Poslat“: `.venv/bin/python lampicky_cli.py napis "{person}" "TEXT"` (prázdný řádek = další zpráva), ověř `.venv/bin/python lampicky_cli.py fronta`, napiš že je zařazeno a skonči `TASK: close`. Po „Nechat být“: nic neposílej, `TASK: close`. Po „Upravit“: počkej na jeho text a pošli ten."""
+
+
+def telegram_on():
+    """Hlavní vypínač napojení na Telegram: config.json → "telegram": true/false (čte se pokaždé, bez restartu)."""
+    try:
+        return bool(json.loads((HERE / "config.json").read_text()).get("telegram", False))
+    except (OSError, ValueError):
+        return False
+
+
+def tg_spawn(obj):
+    try:
+        subprocess.run(["node", str(TG_DIR / "spawn.mjs"), json.dumps(obj, ensure_ascii=False)], capture_output=True, timeout=20)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def tg_open_tasks():
+    try:
+        return json.loads((Path.home() / ".config" / "claude-telegram" / "open-tasks.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 def notify(title, text):
+    """Mac + Telegram: věc, kterou bot u konkrétního člověka neví = nové vlákno s návrhem odpovědi;
+    ostatní upozornění do vlákna „Lampičky – ovládání“ (se zvukem jen když na tebe něco čeká)."""
+    if telegram_on() and (TG_DIR / "notify.mjs").exists():
+        try:
+            ring = any(k in title for k in TG_RING)
+            person, _, rest = text.partition(": ")
+            if ring and rest and len(person) < 60:
+                key = "lampicky:" + re.sub(r"\W+", "-", person.lower()).strip("-")
+                if key in tg_open_tasks():
+                    tg_spawn({"to": key, "prompt": f"{title}: {rest}"})
+                else:
+                    tg_spawn({"key": key, "title": f"🪔 {person}"[:60], "dir": str(HERE),
+                              "prompt": TG_TASK_PROMPT.format(title=title, person=person.replace('"', ""), text=rest)})
+            else:
+                f = Path.home() / ".config" / "claude-telegram" / "spawn" / f"notify-{time.time_ns()}.json"
+                tmp = f.with_suffix(".tmp")
+                tmp.write_text(json.dumps({"notify": f"{title.replace('Lampičky – ', '🪔 ')}\n{text}", "ring": ring,
+                                           "key": TG_CONTROL}, ensure_ascii=False))
+                tmp.rename(f)
+        except Exception:  # noqa: BLE001
+            pass
     if sys.platform == "darwin":
         esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')
         subprocess.run(["osascript", "-e", f'display notification "{esc(text)}" with title "{esc(title)}" sound name "Glass"'])
@@ -281,14 +341,18 @@ PHOTO = re.compile(r"(fotka|fotku|obrázek|video).*odeslal\(a\) (.+?) v ", re.I)
 
 
 DATE = re.compile(r"^(\d{1,2}\. ?\d{1,2}\.|\d{1,2}:\d{2}$|(Po|Út|St|Čt|Pá|So|Ne)\b|Dnes|Včera|.*\bV \d{1,2}:\d{2}$)")
-SYSTEM_TEXT = re.compile(r"koncovým šifrováním|Teď už si můžete|Na Facebooku jste přáteli|Zobrazit profil|Nový Facebook profil|^Žije v ")
+SYSTEM_TEXT = re.compile(r"koncovým šifrováním|Teď už si můžete|Na Facebooku jste přáteli|Zobrazit profil|Nový Facebook profil|^Žije v "
+                         r"|^(Blokovat|Smazat|Odstranit|Přijmout|Ignorovat|Nahlásit|Omezit)$")  # tlačítka u žádosti o zprávu
+
+REQUEST_BAR = re.compile(r"^(Blokovat|Smazat|Přijmout|Ignorovat)$")  # spodní lišta žádosti = konec konverzace
 
 
 def read_messages():
     """Zprávy v otevřené konverzaci: [{from: them|me, text, images}]."""
     all_nodes = sorted(nodes(), key=lambda n: n[3][1])
     # spodní hranice konverzace: pole pro psaní nebo lišta „Pokud odpovíte…“ u žádostí
-    bottom = min([b[1] for c, t, _, b in all_nodes if c == "EditText" or t.startswith("Pokud odpovíte")] or [10_000])
+    bottom = min([b[1] for c, t, dsc, b in all_nodes if c == "EditText" or t.startswith("Pokud odpovíte")
+                  or REQUEST_BAR.match(t.strip() or (dsc or "").strip())] or [10_000])
     out, bubbles = [], []
     for cls, text, desc, (x1, y1, x2, y2) in all_nodes:
         if y1 < 245 or y2 > bottom:
@@ -344,6 +408,10 @@ def send_photo(path):
 
 def send_message(text):
     box = d(className="android.widget.EditText")
+    if not box.exists and d(text="Přijmout").exists:  # žádost o zprávu: pole pro psaní je až po přijetí
+        d(text="Přijmout").click()
+        time.sleep(2)
+        box = d(className="android.widget.EditText")
     box.click()
     psani.human_type(d, text)  # po znacích s pauzami, ne celé naráz
     tap_desc("Poslat", exact=True)

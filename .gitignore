@@ -21,3 +21,4 @@ konverzace*.json
 audit_komentare.json
 data/
 dashboard_stav.json
+logs/
