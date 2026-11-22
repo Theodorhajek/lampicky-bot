@@ -47,29 +47,51 @@ def click_desc(desc, timeout=10, **kw):
     sel.click()
 
 
+COMPOSER_MARKS = ("Přidat text", "Nový příspěvek", "Vytvořte příspěvek", "Zahodit příspěvek", "Vyberte album")
+
+
+def composer_open():
+    if "Composer" in (d.app_current().get("activity") or ""):
+        return True
+    descs = " | ".join((n.get("content-desc") or n.get("text") or "") for n in nodes())
+    return any(m in descs for m in COMPOSER_MARKS)
+
+
 def discard_composer():
-    """Rozepsaný příspěvek (třeba po pádu) zahodit – nikdy ho nezveřejnit."""
-    if "Composer" not in (d.app_current().get("activity") or ""):
+    """Rozepsaný příspěvek (třeba po pádu) zahodit – nikdy ho nezveřejnit.
+    Může být zanořený (editor textu → příspěvek → galerie), proto víc kroků zpět."""
+    if not composer_open():
         return False
-    d.press("back")
-    time.sleep(3)
-    sel = d(description="Zahodit příspěvek")
-    if not sel.exists:
-        sel = d(text="Zahodit příspěvek")
-    if sel.exists:
-        sel.click()
-    else:
+    for _ in range(5):
+        sel = d(description="Zahodit příspěvek")
+        if not sel.exists:
+            sel = d(text="Zahodit příspěvek")
+        if sel.exists:
+            sel.click()
+            time.sleep(3)
+        if not composer_open():
+            break
         d.press("back")
-    time.sleep(3)
+        time.sleep(2)
     return True
 
 
 def home():
     """Facebook nastartovaný načisto, hlavní stránka."""
     d.app_start(FB, ".LoginActivity", stop=True)  # s aktivitou = bez „monkey“, který zapíná otáčení
-    for _ in range(5):
+    for _ in range(6):
+        if re.search(r"Interstitial|QuickPromotion", d.app_current().get("activity") or ""):
+            d.press("back")  # reklamní okno přes celou obrazovku („Váš Meta účet je tady“ apod.) – jen zavřít, nic nepotvrzovat
+            time.sleep(3)
+            if re.search(r"Interstitial|QuickPromotion", d.app_current().get("activity") or ""):
+                d.app_start(FB, ".LoginActivity", stop=True)  # zpět nezabírá → restart, po něm okno zmizí
+                time.sleep(10)
+            continue
         if d(descriptionMatches="^(Hledat|Search)$").wait(timeout=20):  # FB se někdy načítá pomalu; občas je anglicky
-            return
+            time.sleep(3)  # FB po startu umí obnovit rozepsaný příspěvek přes hlavní stránku
+            if not discard_composer():
+                return
+            continue
         if d.app_current().get("package") != FB:  # „zpět“ nás vyhodilo z aplikace – znovu otevřít
             d.app_start(FB, ".LoginActivity")
             continue
@@ -89,8 +111,9 @@ def open_group(name, members):
         except Exception:  # noqa: BLE001  – StaleObjectException: prvek se mezitím překreslil
             time.sleep(2)
             continue
-        if d(className="android.widget.EditText").wait(timeout=8):
+        if d(className="android.widget.EditText").wait(timeout=8) and not composer_open():
             break
+        discard_composer()
         time.sleep(2)
     else:
         raise RuntimeError("Facebook: neotevřelo se hledání")
@@ -111,7 +134,7 @@ def open_group(name, members):
         for n in nodes():
             t = (n.get("content-desc") or "").replace("\xa0", " ")
             x1, y1, x2, y2 = bounds(n)
-            if not (n.get("class", "").endswith("Button") and t.startswith(name + ",") and y2 - y1 > 100):
+            if not (n.get("class", "").endswith("Button") and re.match(re.escape(name) + r"[^\w,]*,", t) and y2 - y1 > 100):
                 continue
             count = re.search(r"·\s*([\d\s,]+)", t)
             if want and count and count.group(1).strip().startswith(want):
@@ -162,6 +185,15 @@ def push_photo(path):
     time.sleep(3)
 
 
+def typed_ok(text):
+    """Je v poli příspěvku opravdu náš text? (porovnání bez emoji a mezer)"""
+    want = re.sub(r"[^\w]", "", text)
+    for n in nodes():
+        if n.get("class", "").endswith(("EditText", "AutoCompleteTextView")) and re.sub(r"[^\w]", "", n.get("text") or "") == want:
+            return True
+    return False
+
+
 def compose(text, photos):
     """Ve skupině otevře nový příspěvek, vloží text a fotky (jedna cesta nebo seznam). Nezveřejňuje."""
     photos = [photos] if isinstance(photos, (str, Path)) else list(photos)
@@ -174,6 +206,15 @@ def compose(text, photos):
     box.click()
     psani.human_type(d, text)
     time.sleep(2)
+    if not typed_ok(text):  # FB občas přepne editor uprostřed psaní a z textu je nesmysl („gvggg…“)
+        f = d(className="android.widget.EditText")
+        f.click()
+        f.clear_text()
+        time.sleep(1)
+        psani.human_type(d, text)
+        time.sleep(2)
+        if not typed_ok(text):
+            raise RuntimeError("Facebook: text příspěvku se nenapsal správně – nezveřejňuji")
     if d(description="Galerie").exists is False:
         d.press("back")  # schovat klávesnici
         time.sleep(2)
@@ -187,7 +228,7 @@ def compose(text, photos):
         click_desc("Povolit přístup")
         time.sleep(4)
     for i in range(1, len(photos) + 1):
-        d(className="android.widget.CompoundButton", descriptionStartsWith=f"Fotka, položka {i},").click()
+        d(descriptionStartsWith=f"Fotka, položka {i},", clickable=True).click()  # FB mění třídu (CompoundButton → Button)
         time.sleep(1.5)
     click_desc("Další")
     time.sleep(6)
