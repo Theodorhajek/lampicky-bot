@@ -5,6 +5,7 @@
 Telefon nesmí zároveň ovládat bot_telefon.py – před spuštěním ho zastav (nebo použij frontu v botovi).
 """
 
+import json
 import re
 import subprocess
 import sys
@@ -102,8 +103,36 @@ def home():
     raise RuntimeError("Facebook: nenačetla se hlavní stránka")
 
 
+def group_url(name):
+    """Odkaz na skupinu z plany/skupiny_odkazy.json (název → https://www.facebook.com/groups/…)."""
+    try:
+        return json.loads((HERE / "plany" / "skupiny_odkazy.json").read_text(encoding="utf-8")).get(name)
+    except (OSError, ValueError):
+        return None
+
+
+def open_group_url(name, url):
+    """Otevře skupinu přímo odkazem (bez hledání). True, když je na obrazovce opravdu ta skupina."""
+    home()
+    m = re.search(r"groups/([^/?#]+)", url)
+    # https odkaz Android nabízí i prohlížeči (okno „Otevřít pomocí“) → aplikaci FB dát rovnou fb:// odkaz
+    link = f"fb://group/{m.group(1)}" if m and m.group(1).isdigit() else f"fb://facewebmodal/f?href={url}"
+    subprocess.run([ADB, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", link, "-p", FB], capture_output=True)
+    for _ in range(8):
+        time.sleep(3)
+        descs = " | ".join((n.get("content-desc") or n.get("text") or "") for n in nodes())
+        if re.sub(r"\W", "", name.lower())[:25] in re.sub(r"\W", "", descs.lower()):
+            time.sleep(3)
+            return True
+    return False
+
+
 def open_group(name, members):
-    """Najde skupinu přes hledání (jméno + počet členů, např. „13“ z „13 tis.“) a otevře ji."""
+    """Otevře skupinu: přednostně odkazem (plany/skupiny_odkazy.json), jinak přes hledání
+    (jméno + počet členů, např. „13“ z „13 tis.“)."""
+    url = group_url(name)
+    if url and open_group_url(name, url):
+        return
     home()
     for _ in range(3):  # klepnutí na lupu občas nezabere (stránka se ještě načítá / zrovna se překresluje)
         try:
