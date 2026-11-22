@@ -528,7 +528,8 @@ Pravidla:
 - Pokud se zákazník jakkoli ptá na autorská práva, licenci, ochrannou známku nebo povolení používat logo/značku (např. „máte povolení to logo používat?"), dej action="block", messages=[] a handoff=false – prodejce takového člověka blokuje a nic mu neodpovídá.
 - „[fotka]" znamená, že zákazník poslal obrázek (nevidíš ho) – poděkuj a ber to jako dodanou fotku.
 - Vidíš jen posledních pár zpráv konverzace. Pokud chybí kontext, nic nepiš a předej (action="none", handoff=true).
-- payment_amount: když v této odpovědi posíláš číslo účtu k zaplacení, napiš sem částku v Kč, kterou má zákazník teď poslat (celé předem = zboží + doprava, u dobírky jen doprava) – bot pošle i QR platbu. Jinak 0.
+- Pokud zákazník v konverzaci řekl, že chce QR kód, číslo účtu vůbec nepiš – jen částku a že posíláš QR kód (např. „Celkem 775 Kč, posílám QR kód 🙂"), payment_amount = ta částka.
+- payment_amount: když v této odpovědi posíláš platební údaje (číslo účtu nebo QR kód), napiš sem částku v Kč, kterou má zákazník teď poslat (celé předem = zboží + doprava, u dobírky jen doprava) – bot pošle i QR platbu. Jinak 0.
 - order_ready=true, když má objednávka v konverzaci všechny údaje (jméno, telefon, doprava s adresou nebo výdejním místem, způsob platby, motiv a počet kusů) – bot z ní připraví koncept pro server. Jinak false.
 - note: jedna krátká věta pro prodejce, co se v konverzaci děje (např. „chce lampičku s E46, čeká na platbu").
 
@@ -1256,7 +1257,8 @@ def phone_online():
 def payment_in_text(text):
     """Zpráva s číslem účtu → částka k zaplacení (poslední „… Kč“ v textu), jinak 0."""
     acc = payment_account()
-    if acc not in (text or "") and acc.split("/")[0] not in (text or ""):
+    qr = re.search(r"(?i)\bQR\b", text or "")  # „posílám QR kód“ bez čísla účtu (zákazník chtěl QR)
+    if not qr and acc not in (text or "") and acc.split("/")[0] not in (text or ""):
         return 0
     nums = [int(re.sub(r"\D", "", n)) for n in re.findall(r"(\d[\d\s.]*)\s*Kč", text)]
     return nums[-1] if nums else 0
