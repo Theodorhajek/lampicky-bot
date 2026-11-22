@@ -48,7 +48,7 @@ def main():
                 print(l[:220])
     elif cmd == "napis":
         data.outbox_add("zprava", a[1], a[2])
-        print("zařazeno – bot to napíše při nejbližší kontrole (do pár minut, mimo noční pauzu 01:15–05:50)")
+        print("zařazeno – bot to napíše při nejbližší kontrole (do pár minut, mimo noční pauzu 01:15–05:00)")
     elif cmd in ("botovi", "prevzit"):
         data.outbox_add(cmd, a[1])
         print("zařazeno")

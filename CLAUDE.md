@@ -6,7 +6,7 @@ Bot běží na Macu a ovládá telefon (Redmi, adb): odpovídá v Messengeru, po
 ## Ovládání
 - `./ovladani.sh stav|start|stop|restart [bot|dashboard]` – bot a dashboard (http://127.0.0.1:5005) běží na pozadí, log `logs/bot.out`, akce `log.csv`.
 - `.venv/bin/python lampicky_cli.py …` – stav, konverzace, napsat zákazníkovi, vrátit/převzít konverzaci, objednávky, platby (viz `--help` v souboru).
-- Noční pauza 01:15–05:50 českého času (`config.json` → `offHours`). Mac je v jiném časovém pásmu – vždy počítej s Europe/Prague.
+- Noční pauza 01:15–05:00 českého času (`config.json` → `offHours`). Mac je v jiném časovém pásmu – vždy počítej s Europe/Prague.
 
 ## Pravidla (Theodorova, platí vždy)
 - Zákazníkům nic nepiš bez jeho výslovného „pošli“ (nebo tlačítka Poslat). Do Shopify naostro (`poslat-objednavku`) jen po jeho „ano“.
