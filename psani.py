@@ -46,3 +46,24 @@ def human_type(d, text):
         time.sleep(_delay(chunk[-1], prev))
         prev = chunk[-1]
     time.sleep(random.uniform(0.5, 1.2))  # chvilka, než „klepne“ na Odeslat
+    # kontrola: FB/Messenger občas uprostřed psaní přepne pole a z textu je nesmysl („gvggg…“)
+    if not _same(_text(d), text):
+        f = d(focused=True)
+        f.set_text(text)  # celé naráz
+        time.sleep(1)
+        if not _same(_text(d), text):
+            f.clear_text()
+            raise RuntimeError("psaní: text se nenapsal správně – nic neodesílám")
+
+
+def _text(d):
+    try:
+        return d(focused=True).get_text() or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _same(a, b):
+    import re  # noqa: PLC0415
+    k = lambda s: re.sub(r"[^\w]", "", s or "")
+    return k(a) == k(b)
