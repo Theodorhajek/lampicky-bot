@@ -636,6 +636,8 @@ def handle_thread(conv):
     if t["handled"] == fingerprint:
         return
     if t["handedOff"]:
+        t["handled"] = fingerprint  # jednou za novou zprávu – a dát vědět, ať to neleží
+        notify("Lampičky – potřebuju tě (nová zpráva v předané konverzaci)", f"{name}: {last['text'] or '(příloha)'}")
         return log(name, "nová zpráva, čeká na tebe (předáno)", last["text"])
     if time.time() * 1000 < t["pausedUntil"]:
         return log(name, "nová zpráva, bot pozastaven (píšeš ručně)", last["text"])
