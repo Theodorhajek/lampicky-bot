@@ -1335,13 +1335,15 @@ def process_outbox():
                 log(person, "odeslán návrh (schválený)", job.get("text", ""))
             elif kind == "zprava" and SEND:
                 open_chat_any(person)
+                qr_sent = False
                 for i, part in enumerate(p for p in text.split("\n\n") if p.strip()):  # prázdný řádek = další zpráva
                     if i:
                         time.sleep(random.uniform(2, 5))
                     send_message(part.strip())
-                amount = payment_in_text(text)
-                if amount:
-                    send_payment_qr(person, amount)
+                    amount = 0 if qr_sent else payment_in_text(part)
+                    if amount:  # QR hned za zprávu s částkou, ne až na konec
+                        send_payment_qr(person, amount)
+                        qr_sent = True
                 t["pausedUntil"] = (time.time() + CONFIG["pauseAfterManualReplyHours"] * 3600) * 1000  # píšeš ty – bot mlčí
                 data.save_conversation(person, read_messages(), t["botSent"])
                 log(person, "odesláno z dashboardu", text)
