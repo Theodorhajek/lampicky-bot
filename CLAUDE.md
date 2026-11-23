@@ -4,8 +4,10 @@ Theodor prodává ručně dělané LED lampičky (690 Kč/ks, gravírované akry
 Bot běží na Macu a ovládá telefon (Redmi, adb): odpovídá v Messengeru, pod příspěvky ve skupinách a postuje do skupin.
 
 ## Ovládání
-- `./ovladani.sh stav|start|stop|restart [bot|dashboard]` – bot a dashboard (http://127.0.0.1:5005) běží na pozadí, log `logs/bot.out`, akce `log.csv`.
-- `.venv/bin/python lampicky_cli.py …` – stav, konverzace, napsat zákazníkovi, vrátit/převzít konverzaci, objednávky, platby (viz `--help` v souboru).
+- `./ovladani.sh stav|start|stop|restart` – bot běží na pozadí, log `logs/bot.out`, akce `log.csv`. Dashboard je zrušený (Theodor 23. 11.) – všechno se dělá přes Telegram a `lampicky_cli.py`.
+- `.venv/bin/python lampicky_cli.py …` – `prehled` (co čeká na Theodora), konverzace, napsat zákazníkovi, vrátit/převzít konverzaci, návrhy (`navrhy`, `poslat-navrh`, `zamitnout-navrh`), objednávky (`objednavka`, `upravit-objednavku`, `poslat-objednavku`), platby, `lekce`, `skupiny`, `odkaz-skupiny` (viz docstring souboru).
+- Návrhy obrázků a koncepty objednávek chodí do Telegramu jako vlastní vlákna s tlačítky; ovládací vlákno „🪔 Lampičky – ovládání“ je trvalé.
+- Lekce z oprav: když Theodor opraví odpověď nebo postup, přidej lekci (`lampicky_cli.py lekce "…"`) – bot ji čte u každé odpovědi.
 - Noční pauza 01:15–05:00 českého času (`config.json` → `offHours`). Mac je v jiném časovém pásmu – vždy počítej s Europe/Prague.
 
 ## Pravidla (Theodorova, platí vždy)

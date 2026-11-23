@@ -81,7 +81,8 @@ Poznámka bota: {text}
 2. Řekni v 1–2 větách, co zákazník chce a proč to bot neví.
 3. Navrhni odpověď přesně ve stylu prodejce (CLAUDE.md, lekce.md). Pokud chybí informace, kterou ví jen Theodor (termín, cena, atyp), zeptej se ho a návrh zatím nepiš.
 4. Konec: návrh odpovědi a řádek `OPTIONS: Poslat | Upravit | Nechat být`.
-Po „Poslat“: `.venv/bin/python lampicky_cli.py napis "{person}" "TEXT"` (prázdný řádek = další zpráva), ověř `.venv/bin/python lampicky_cli.py fronta`, napiš že je zařazeno a skonči `TASK: close`. Po „Nechat být“: nic neposílej, `TASK: close`. Po „Upravit“: počkej na jeho text a pošli ten."""
+Po „Poslat“: `.venv/bin/python lampicky_cli.py napis "{person}" "TEXT"` (prázdný řádek = další zpráva), ověř `.venv/bin/python lampicky_cli.py fronta`, napiš že je zařazeno a skonči `TASK: close`. Po „Nechat být“: nic neposílej, `TASK: close`. Po „Upravit“: počkej na jeho text a pošli ten.
+Učení: když Theodor návrh opraví nebo řekne, co bot dělá špatně, a jde o obecné pravidlo (ne jen tenhle zákazník), přidej lekci jednou krátkou větou: `.venv/bin/python lampicky_cli.py lekce "…"` a napiš mu ji. Fakta o prodeji (ceny, doprava) patří do info.md – ty jen navrhni, neměň."""
 
 
 def telegram_on():
@@ -90,6 +91,32 @@ def telegram_on():
         return bool(json.loads((HERE / "config.json").read_text()).get("telegram", False))
     except (OSError, ValueError):
         return False
+
+
+TG_PROPOSAL_PROMPT = """Lampičky – návrh obrázku pro zákazníka čeká na schválení. Česky, krátce. Pracovní složka = bot (CLAUDE.md).
+
+Zákazník: {person} · motiv: {motif} {label} · návrh #{pid}
+Popisek, který bot pošle s obrázkem: „{caption}“
+
+Odpověz jednou větou, co zákazník chtěl (`.venv/bin/python lampicky_cli.py konverzace "{person}"`, jen posledních pár zpráv), pak:
+SEND_FILE: {file}
+OPTIONS: Poslat | Upravit popisek | Zamítnout
+Po „Poslat“: `.venv/bin/python lampicky_cli.py poslat-navrh {pid}`, napiš že se posílá, `TASK: close`.
+Po „Upravit popisek“: počkej na jeho text, pak `.venv/bin/python lampicky_cli.py poslat-navrh {pid} "TEXT"`, `TASK: close`.
+Po „Zamítnout“: `.venv/bin/python lampicky_cli.py zamitnout-navrh {pid}`, zeptej se, co má být jinak (nový návrh udělá bot/Theodor), pak `TASK: close`.
+Nic dalšího zákazníkovi neposílej."""
+
+
+TG_ORDER_PROMPT = """Lampičky – koncept objednávky pro server (Shopify) čeká na kontrolu. Česky, krátce. Pracovní složka = bot (CLAUDE.md).
+
+Zákazník: {person} · koncept #{rid}
+1. `.venv/bin/python lampicky_cli.py objednavka {rid}` a `.venv/bin/python lampicky_cli.py platby`.
+2. Shrň v 3–5 řádcích: jméno, telefon, doprava + výdejní místo, platba (zaplaceno?), motivy × kusy, poznámky. Co chybí nebo je sporné, zvýrazni.
+3. Ukaž obrázky (SEND_FILE: cesta, jeden řádek na obrázek) a dej `OPTIONS: Poslat do Shopify | Upravit | Zahodit`.
+Po „Poslat do Shopify“: `.venv/bin/python lampicky_cli.py test-objednavky {rid}`, když projde, `.venv/bin/python lampicky_cli.py poslat-objednavku {rid}`, napiš výsledek, `TASK: close`.
+Po „Upravit“: počkej, co změnit, `.venv/bin/python lampicky_cli.py upravit-objednavku {rid} 'klic=hodnota'`, znovu shrň a dej OPTIONS.
+Po „Zahodit“: `.venv/bin/python lampicky_cli.py zahodit-objednavku {rid}`, `TASK: close`.
+Pozor: koncept může mezitím odejít sám (autoObjednavky) – když `objednavka` ukáže stav jiný než koncept/chyba, jen to oznam a `TASK: close`."""
 
 
 def tg_spawn(obj):
@@ -697,9 +724,14 @@ def handle_thread(conv):
     if answer.get("order_ready") and SEND:
         try:
             import lumao  # noqa: PLC0415
-            if lumao.draft_from_conversation(name, transcript(messages), CONFIG["claudePath"], CONFIG["model"]):
-                log(name, "OBJEDNÁVKA – KONCEPT", "zkontroluj a pošli do Shopify v dashboardu (Objednávky)")
-                notify("Lampičky – objednávka ke kontrole", f"{name}: koncept je v dashboardu")
+            rid = lumao.draft_from_conversation(name, transcript(messages), CONFIG["claudePath"], CONFIG["model"])
+            if rid:
+                log(name, "OBJEDNÁVKA – KONCEPT", "zkontroluj v Telegramu (nebo odejde sama, když je úplná a zaplacená)")
+                if telegram_on() and isinstance(rid, int) and not isinstance(rid, bool):
+                    tg_spawn({"key": f"lampicky:objednavka-{rid}", "title": f"🪔 Objednávka: {name}"[:60], "dir": str(HERE),
+                              "prompt": TG_ORDER_PROMPT.format(rid=rid, person=name.replace('"', ""))})
+                else:
+                    notify("Lampičky – objednávka ke kontrole", f"{name}: koncept #{rid}")
         except Exception as e:  # noqa: BLE001
             log(name, "OBJEDNÁVKA – CHYBA KONCEPTU", str(e)[:200])
     if answer.get("handoff"):
@@ -1060,6 +1092,8 @@ def run_queue():
         job["status"] = "ceka" if job["tries"] < 3 else "chyba"
         job["due"] = time.time() + 30 * 60
         log(job["group"], "PŘÍSPĚVEK – CHYBA", job.get("error", ""))
+        if job["status"] == "chyba":  # 3× po sobě nevyšlo – dál to nezkoušet a dát vědět
+            notify("Lampičky – příspěvek vzdán", f"{job['group']}: 3× nevyšlo – {job.get('error', '')}"[:200])
         if job["status"] == "chyba":
             notify("Lampičky – příspěvek se nepovedl", f"{job['group']}: {job.get('error', '')}"[:200])
     QUEUE_FILE.write_text(json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1284,9 +1318,14 @@ def make_proposal(person, motif, label, messages):
         f = navrh.make(motif, label, person)
         formal = not any(re.match(r"(?i)\s*(ahoj|čau|cau|nazdar)", m["text"] or "") for m in messages if m["from"] == "them")
         caption = ("Dobrý den, tady je návrh 🙂 Takhle by to šlo?" if formal else "Tady je návrh 🙂 Takhle by to šlo?")
-        data.proposal_add(person, f, motif, label, caption)
-        log(person, "NÁVRH KE SCHVÁLENÍ", f"{motif}{' + ' + label if label else ''} – schval v dashboardu")
-        notify("Lampičky – návrh ke schválení", f"{person}: {motif} {label}".strip())
+        pid = data.proposal_add(person, f, motif, label, caption)
+        log(person, "NÁVRH KE SCHVÁLENÍ", f"{motif}{' + ' + label if label else ''} – schval v Telegramu")
+        if telegram_on() and pid:
+            tg_spawn({"key": f"lampicky:navrh-{pid}", "title": f"🪔 Návrh: {person}"[:60], "dir": str(HERE),
+                      "prompt": TG_PROPOSAL_PROMPT.format(pid=pid, person=person.replace('"', ""), motif=motif,
+                                                          label=label or "", caption=caption, file=f)})
+        else:
+            notify("Lampičky – návrh ke schválení", f"{person}: {motif} {label}".strip())
     except Exception as e:  # noqa: BLE001
         log(person, "NÁVRH – CHYBA", str(e))
         notify("Lampičky – návrh se nepovedl", f"{person}: {e}"[:200])

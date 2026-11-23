@@ -143,8 +143,9 @@ def outbox_done(oid, ok=True, error=""):
 
 def proposal_add(person, file, motif, label, caption):
     with db() as con:
-        con.execute("INSERT INTO proposals(ts, person, file, motif, label, caption) VALUES (?,?,?,?,?,?)",
-                    (time.time(), person, str(file), motif, label, caption))
+        cur = con.execute("INSERT INTO proposals(ts, person, file, motif, label, caption) VALUES (?,?,?,?,?,?)",
+                          (time.time(), person, str(file), motif, label, caption))
+        return cur.lastrowid
 
 
 def proposals(status="ke_schvaleni"):

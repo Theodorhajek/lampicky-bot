@@ -1,8 +1,8 @@
 #!/bin/zsh
-# Ovládání bota a dashboardu nezávisle na terminálu:  ./ovladani.sh start|stop|restart|stav [bot|dashboard]
+# Ovládání bota nezávisle na terminálu:  ./ovladani.sh start|stop|restart|stav [bot|dashboard]  (dashboard je zrušený – vše jde přes Telegram; spustí se jen výslovně)
 cd "$(dirname "$0")"
 PY=.venv/bin/python
-what=${2:-all}
+what=${2:-bot}
 pidof() { [ -f "logs/$1.pid" ] && kill -0 "$(cat logs/$1.pid)" 2>/dev/null && cat "logs/$1.pid"; }
 start1() {
   if pidof $1 >/dev/null; then echo "$1 už běží (pid $(pidof $1))"; return; fi
@@ -22,4 +22,4 @@ for w in bot dashboard; do
     stav|status) stav1 $w;; *) echo "použití: ./ovladani.sh start|stop|restart|stav [bot|dashboard]"; exit 2;;
   esac
 done
-[ "$1" = stav ] && { echo "--- poslední záznamy bota:"; tail -8 logs/bot.out 2>/dev/null | cut -c1-220; }
+[ "$1" = stav ] && { echo "--- poslední záznamy bota:"; tail -8 logs/bot.out 2>/dev/null | cut -c1-220; } || true
