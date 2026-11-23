@@ -663,6 +663,9 @@ def handle_thread(conv):
     fingerprint = norm(transcript(messages[-5:]) + (f" reakce {reaction}" if reaction else ""))
     if t["handled"] == fingerprint:
         return
+    if t.get("spamUntil", 0) > time.time():
+        t["handled"] = fingerprint
+        return  # spam (cam skupiny apod.) – týden ho znovu nečíst, zdržoval skutečné zákazníky
     if t["handedOff"]:
         t["handled"] = fingerprint  # jednou za novou zprávu – a dát vědět, ať to neleží
         notify("Lampičky – potřebuju tě (nová zpráva v předané konverzaci)", f"{name}: {last['text'] or '(příloha)'}")
@@ -721,6 +724,8 @@ def handle_thread(conv):
             log(name, "NÁVRH (neodesláno)", msg)
     else:
         log(name, "bez odpovědi", answer.get("note", ""))
+        if re.match(r"(?i)\W*spam", answer.get("note", "")):
+            t["spamUntil"] = time.time() + 7 * 86400
     if answer.get("order_ready") and SEND:
         try:
             import lumao  # noqa: PLC0415
