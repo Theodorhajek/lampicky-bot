@@ -217,9 +217,13 @@ def push_photo(path):
 def typed_ok(text):
     """Je v poli příspěvku opravdu náš text? (porovnání bez emoji a mezer)"""
     want = re.sub(r"[^\w]", "", text)
-    for n in nodes():
-        if n.get("class", "").endswith(("EditText", "AutoCompleteTextView")) and re.sub(r"[^\w]", "", n.get("text") or "") == want:
-            return True
+    for cls in ("android.widget.EditText", "android.widget.AutoCompleteTextView"):
+        for i in range(d(className=cls).count):
+            try:
+                if re.sub(r"[^\w]", "", d(className=cls, instance=i).get_text() or "") == want:
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
     return False
 
 
@@ -233,6 +237,15 @@ def compose(text, photos):
     time.sleep(5)
     box = d(className="android.widget.EditText") if d(className="android.widget.EditText").exists else d(className="android.widget.AutoCompleteTextView")
     box.click()
+    # FB po klepnutí do ~1 s přepne do editoru „Přidat text“ – začít psát až v něm, jinak se text rozbije („gvggg…“)
+    for _ in range(10):
+        time.sleep(0.6)
+        if d(text="Přidat text").exists or d(description="Přidat text").exists:
+            break
+    time.sleep(1.2)
+    if not d(focused=True).exists:
+        d(className="android.widget.EditText").click()
+        time.sleep(1)
     psani.human_type(d, text)
     time.sleep(2)
     if not typed_ok(text):  # FB občas přepne editor uprostřed psaní a z textu je nesmysl („gvggg…“)
@@ -380,6 +393,9 @@ def join_or_post(group, members, photos, text, answerer=None):
         return state, None
     if not d(description="Napište něco…").exists and (d(description="Co prodáváte?").exists or d(text="Co prodáváte?").exists):
         return "sell-group", None  # bazarová skupina – jen inzeráty s cenou, tam nepostujeme
+    if not d(description="Napište něco…").wait(timeout=10) and not d(text="Napište něco…").exists:
+        # člen, ale pole pro nový příspěvek ve skupině není (píšou jen správci) → nemá cenu to zkoušet znovu
+        return "no-permission", None
     compose(text, photos)
     publish()
     shot = screenshot("zverejneno")
