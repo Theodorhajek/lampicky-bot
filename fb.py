@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -128,12 +129,33 @@ def open_group_url(name, url):
     return False
 
 
-def open_group(name, members):
-    """Otevře skupinu: přednostně odkazem (plany/skupiny_odkazy.json), jinak přes hledání
-    (jméno + počet členů, např. „13“ z „13 tis.“)."""
-    url = group_url(name)
-    if url and open_group_url(name, url):
-        return
+def _norm(s):
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+STOP = {"a", "i", "v", "ve", "na", "do", "se", "pro", "z", "ze", "s", "k", "o", "u", "the", "and", "of", "cz", "sk"}
+
+
+def search_queries(name):
+    """Hledané výrazy od krátkých po celý název: FB u dlouhých názvů často „opraví“ dotaz nebo skupinu nenajde,
+    1–2 slova + projít výsledky bývá úspěšnější. Např. „Kamiony na dobových fotografiích“ → „Kamiony dobových“,
+    „Kamiony dobových fotografiích“, celý název."""
+    words = [w for w in re.findall(r"[\w'’-]+", name) if w.lower() not in STOP and len(w) > 1]
+    out = []
+    for k in (2, 3, 5):
+        if words[:k]:
+            out.append(" ".join(words[:k]))
+    out.append(name)
+    seen = []
+    for q in out:
+        if q not in seen:
+            seen.append(q)
+    return seen
+
+
+def search_groups(query):
+    """Napíše dotaz do hledání FB a přepne na výsledky Skupiny. False = hledání se neotevřelo."""
     home()
     for _ in range(3):  # klepnutí na lupu občas nezabere (stránka se ještě načítá / zrovna se překresluje)
         try:
@@ -149,35 +171,67 @@ def open_group(name, members):
         raise RuntimeError("Facebook: neotevřelo se hledání")
     time.sleep(1)
     psani.tap(d, d(className="android.widget.EditText"))
-    psani.human_type(d, name)
+    psani.human_type(d, query)
     time.sleep(1)
     d.press("enter")
     time.sleep(6)
+    exact = d(descriptionStartsWith="Místo toho vyhledat")  # FB dotaz „opravil“ (Kamioňaci → kamionaci)
+    if exact.exists:
+        exact.click()
+        time.sleep(6)
     tab = d(descriptionMatches="^(Výsledky vyhledávání pro Skupiny|Search results for Groups).*")
     if tab.wait(timeout=10):
         tab.click()
-    time.sleep(6)
-    # rozhoduje název; počet členů se mění („42 tis.“ → „42,1 tis.“), takže jen pomáhá vybrat mezi stejnými názvy
-    want = (re.match(r"\d+", members or "") or [""])[0]
-    fallback = None
-    for _ in range(6):
+        time.sleep(6)
+    return True
+
+
+def pick_group(name, want="", screens=8):
+    """Ve výsledcích hledání najde skupinu podle názvu (bez ohledu na diakritiku, velikost písmen a emoji na konci)
+    a otevře ji. Počet členů se mění („42 tis.“ → „42,1 tis.“), takže jen pomáhá vybrat mezi stejnými názvy."""
+    target = _norm(name)
+    seen_titles = set()
+    for _ in range(screens):
+        fallback = None
+        new_titles = 0
         for n in nodes():
             t = (n.get("content-desc") or "").replace("\xa0", " ")
             x1, y1, x2, y2 = bounds(n)
-            if not (n.get("class", "").endswith("Button") and re.match(re.escape(name) + r"[^\w,]*,", t) and y2 - y1 > 100):
+            m = re.match(r"^(.*?),\s*(?:Veřejná|Soukromá|Public|Private)", t)
+            if not (n.get("class", "").endswith("Button") and m and y2 - y1 > 100):
+                continue
+            title = m.group(1)
+            new_titles += title not in seen_titles
+            seen_titles.add(title)
+            if _norm(title) != target:
                 continue
             count = re.search(r"·\s*([\d\s,]+)", t)
             if want and count and count.group(1).strip().startswith(want):
                 d.click(540, (y1 + y2) // 2)
                 time.sleep(7)
-                return
+                return True
             fallback = fallback or (y1 + y2) // 2
         if fallback:
             d.click(540, fallback)
             time.sleep(7)
-            return
+            return True
+        if not new_titles and seen_titles:
+            break  # konec výsledků
         d.swipe(540, 1900, 540, 700, 0.3)
         time.sleep(3)
+    return False
+
+
+def open_group(name, members):
+    """Otevře skupinu: přednostně odkazem (plany/skupiny_odkazy.json), jinak přes hledání
+    (jméno + počet členů, např. „13“ z „13 tis.“)."""
+    url = group_url(name)
+    if url and open_group_url(name, url):
+        return
+    want = (re.match(r"\d+", members or "") or [""])[0]
+    for q in search_queries(name):
+        if search_groups(q) and pick_group(name, want):
+            return
     open_my_group(name)  # skupiny, kde už jsem členem, hledání často neukáže – zkusit seznam „Vaše skupiny“
 
 
