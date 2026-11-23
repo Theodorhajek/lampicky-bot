@@ -415,7 +415,7 @@ def send_message(text):
         d(text="Přijmout").click()
         time.sleep(2)
         box = d(className="android.widget.EditText")
-    box.click()
+    psani.tap(d, box)
     psani.human_type(d, text)  # po znacích s pauzami, ne celé naráz
     tap_desc("Poslat", exact=True)
     time.sleep(2)

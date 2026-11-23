@@ -6,6 +6,7 @@ Telefon nesmí zároveň ovládat bot_telefon.py – před spuštěním ho zasta
 """
 
 import json
+import random
 import re
 import subprocess
 import sys
@@ -147,7 +148,7 @@ def open_group(name, members):
     else:
         raise RuntimeError("Facebook: neotevřelo se hledání")
     time.sleep(1)
-    d(className="android.widget.EditText").click()
+    psani.tap(d, d(className="android.widget.EditText"))
     psani.human_type(d, name)
     time.sleep(1)
     d.press("enter")
@@ -236,7 +237,7 @@ def compose(text, photos):
     click_desc("Napište něco…")
     time.sleep(5)
     box = d(className="android.widget.EditText") if d(className="android.widget.EditText").exists else d(className="android.widget.AutoCompleteTextView")
-    box.click()
+    psani.tap(d, box)
     # FB po klepnutí do ~1 s přepne do editoru „Přidat text“ – začít psát až v něm, jinak se text rozbije („gvggg…“)
     for _ in range(10):
         time.sleep(0.6)
@@ -244,13 +245,13 @@ def compose(text, photos):
             break
     time.sleep(1.2)
     if not d(focused=True).exists:
-        d(className="android.widget.EditText").click()
+        psani.tap(d, d(className="android.widget.EditText"))
         time.sleep(1)
     psani.human_type(d, text)
     time.sleep(2)
     if not typed_ok(text):  # FB občas přepne editor uprostřed psaní a z textu je nesmysl („gvggg…“)
         f = d(className="android.widget.EditText")
-        f.click()
+        psani.tap(d, f)
         f.clear_text()
         time.sleep(1)
         psani.human_type(d, text)
@@ -332,8 +333,7 @@ def fill_questions(answers):
         for n in fields:
             if not todo:
                 break
-            x1, y1, x2, y2 = bounds(n)
-            d.click((x1 + x2) // 2, (y1 + y2) // 2)
+            psani.tap(d, bounds(n))
             time.sleep(1)
             psani.human_type(d, todo.pop(0))
             time.sleep(1)
@@ -732,7 +732,9 @@ def _type_into_box(text):
         if not box.exists:
             box = d(className="android.widget.EditText")
         if box.exists:
-            box.click()
+            b = box.info["bounds"]  # klepnout vpravo v poli → kurzor za zmínkou „Jméno“, ne před ní
+            d.click(b["left"] + int((b["right"] - b["left"]) * random.uniform(0.75, 0.92)),
+                    b["top"] + int((b["bottom"] - b["top"]) * random.uniform(0.35, 0.65)))
             time.sleep(1)
             psani.human_type(d, text)
             return
@@ -779,7 +781,7 @@ def message_commenter(name, text, message):
     box = d(className="android.widget.EditText")
     if not box.wait(timeout=10):
         raise RuntimeError("v chatu chybí pole pro zprávu")
-    box.click()
+    psani.tap(d, box)
     psani.human_type(d, message)
     send = d(descriptionStartsWith="Poslat")
     if not send.exists:
