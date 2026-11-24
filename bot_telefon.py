@@ -1285,7 +1285,14 @@ def main():
 
 
 def phone_online():
-    """Má telefon internet? (ping na 8.8.8.8, pro jistotu i 1.1.1.1)"""
+    """Má telefon internet? U Redmi (tethering.SERIAL) se při výpadku sám zapne internet z Macu přes USB (gnirehtet);
+    jiné telefony: ping na 8.8.8.8 / 1.1.1.1."""
+    try:
+        import tethering  # noqa: PLC0415
+        if tethering.available():
+            return tethering.ensure(lambda m: (print(f"[{datetime.now():%H:%M:%S}] {m}", flush=True), log("telefon", m)))
+    except Exception as e:  # noqa: BLE001
+        print(f"[{datetime.now():%H:%M:%S}] tethering: {e}", flush=True)
     for host in ("8.8.8.8", "1.1.1.1"):
         out = subprocess.run(["adb", "shell", "ping", "-c", "1", "-W", "3", host], capture_output=True, text=True, timeout=20).stdout
         if " 1 received" in out:

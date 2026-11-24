@@ -8,6 +8,7 @@ Bot běží na Macu a ovládá telefon (Redmi, adb): odpovídá v Messengeru, po
 - `.venv/bin/python lampicky_cli.py …` – `prehled` (co čeká na Theodora), konverzace, napsat zákazníkovi, vrátit/převzít konverzaci, návrhy (`navrhy`, `poslat-navrh`, `zamitnout-navrh`), objednávky (`objednavka`, `upravit-objednavku`, `poslat-objednavku`), platby, `lekce`, `skupiny`, `odkaz-skupiny` (viz docstring souboru).
 - Návrhy obrázků a koncepty objednávek chodí do Telegramu jako vlastní vlákna s tlačítky; ovládací vlákno „🪔 Lampičky – ovládání“ je trvalé.
 - Lekce z oprav: když Theodor opraví odpověď nebo postup, přidej lekci (`lampicky_cli.py lekce "…"`) – bot ji čte u každé odpovědi.
+- Záložní internet: když Redmi nemá internet, bot sám zapne internet z Macu přes USB (`tethering.py`, gnirehtet, jen pro tento telefon; ručně `tethering.py start|stop|stav`). Každých 15 min zkusí, jestli už jde Wi-Fi, a tethering vypne.
 - Noční pauza 01:15–05:00 českého času (`config.json` → `offHours`). Mac je v jiném časovém pásmu – vždy počítej s Europe/Prague.
 
 ## Pravidla (Theodorova, platí vždy)
