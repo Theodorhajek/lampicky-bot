@@ -274,12 +274,24 @@ def go_home():
             zasek("Messenger – nenašel jsem seznam chatů, restartuji", f"pokus {attempt + 1}")
             d.app_stop(PKG)  # poslední možnost: Messenger restartovat
             tempo.sleep(2)
-    _go_home()
+    try:
+        _go_home()
+    except RuntimeError:
+        import zachrana  # noqa: PLC0415  – neznámá obrazovka: poradit se s Claudem (jen zpět / zavřít, nic neodesílá)
+        zachrana.rescue(d, "Dostat se v aplikaci Messenger na seznam chatů (karta Chaty).",
+                        lambda: messenger_visible() and d(descriptionStartsWith="Chaty, ").exists)
+        _go_home()
+
+
+def messenger_visible():
+    """Je Messenger opravdu na obrazovce? app_current() občas hlásí Messenger, i když je vidět plocha telefonu
+    (pak se Messenger nespustil a bot „nenašel seznam chatů“)."""
+    return d(packageName=PKG).exists
 
 
 def _go_home():
     wake()
-    if d.app_current().get("package") != PKG:
+    if not messenger_visible():
         d.app_start(PKG, ".auth.StartScreenActivity")  # s aktivitou = bez „monkey“, který zapíná otáčení
         tempo.sleep(5)
     for _ in range(5):
@@ -289,7 +301,7 @@ def _go_home():
             continue
         d.press("back")
         tempo.sleep(1)
-        if d.app_current().get("package") != PKG:
+        if not messenger_visible():
             d.app_start(PKG, ".auth.StartScreenActivity")  # s aktivitou = bez „monkey“, který zapíná otáčení
             tempo.sleep(5)
     tap_desc("Chaty, ")
@@ -1043,6 +1055,8 @@ def run_queue():
     posts_today = state.setdefault("postsByDay", {}).get(today, 0)
     if posts_today >= CONFIG.get("maxPostsPerDay", 4):
         return False  # denní limit příspěvků z profilu vyčerpán – pokračuje se zítra
+    if state.get("postsPausedUntil", 0) > now:
+        return False  # Facebook hlásil omezení/blokaci – 48 h žádné příspěvky ani přidávání do skupin
     job = next((j for j in jobs if j["status"] in ("ceka", "ceka-na-clenstvi") and j.get("due", 0) <= now), None)
     if not job:
         return False
@@ -1064,6 +1078,12 @@ def run_queue():
         except Exception:  # noqa: BLE001
             pass
     job["last"] = datetime.now().strftime("%d. %m. %H:%M")
+    block = fb.blocked_notice()
+    if block:
+        state["postsPausedUntil"] = time.time() + 48 * 3600
+        save_state()
+        log(job["group"], "FACEBOOK HLÁSÍ OMEZENÍ – příspěvky pozastaveny na 48 h", block)
+        notify("Lampičky – Facebook hlásí omezení, potřebuju tě", f"Příspěvky a přidávání do skupin pozastaveny na 48 h. Hláška: {block[:200]}")
     if status in ("posted", "posted-pending"):
         state["postsByDay"][today] = posts_today + 1
         save_state()

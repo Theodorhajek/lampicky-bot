@@ -103,7 +103,32 @@ def home():
             continue
         d.press("back")
         tempo.sleep(1)
+    import zachrana  # noqa: PLC0415  – neznámá obrazovka: poradit se s Claudem (jen zpět / zavřít, nic neodesílá)
+    if zachrana.rescue(d, "Dostat se na hlavní stránku aplikace Facebook (nahoře je ikona Hledat).",
+                       lambda: d.app_current().get("package") == FB and d(descriptionMatches="^(Hledat|Search)$").exists):
+        discard_composer()
+        return
     raise RuntimeError("Facebook: nenačetla se hlavní stránka")
+
+
+BLOCK_RE = (r"(?is).*(dočasně (zablokov|omezen)|jste zablokovan|zablokovali jsme|omezili jsme|vaše (příspěvky|aktivita).{0,40}omezen"
+            r"|porušuje (naše )?zásady|temporarily (blocked|restricted)"
+            r"|you('re| are) (temporarily )?blocked|we limit how often|your account (is|has been) restricted).*")
+
+
+def blocked_notice():
+    """Ukazuje Facebook hlášku o blokaci / omezení účtu (po příspěvku, při přidávání do skupiny…)? Vrací její text."""
+    try:
+        for kw in ("text", "description"):
+            el = d(**{f"{kw}Matches": BLOCK_RE})
+            if el.exists:
+                info = el.info
+                t = info.get("text") or info.get("contentDescription") or ""
+                if len(t) < 400 and not t.startswith(("Pro kamarády", "Tátovi")):  # ne náš vlastní text příspěvku
+                    return t
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def group_url(name):
@@ -811,9 +836,14 @@ def _type_into_box(text):
 def message_commenter(name, text, message):
     """Z komentáře otevře profil člověka → Zpráva → pošle zprávu v Messengeru."""
     b = _find_comment(name, text)
+    if b and (b[1] < 500 or b[3] > 1800):  # komentář u okraje – jméno bývá schované pod lištou „Příspěvky“
+        d.swipe(540, 900, 540, 900 + (1100 - b[1]), 0.4) if b[1] < 500 else d.swipe(540, 1600, 540, 1000, 0.4)
+        tempo.sleep(1.5)
+        b = _find_comment(name, text)
     target = None
     for n in nodes():
-        if (n.get("content-desc") or n.get("text") or "") == name and n.get("clickable") == "true":
+        label = n.get("content-desc") or n.get("text") or ""
+        if label in (name, f"Profilový obrázek {name}") and n.get("clickable") == "true":
             target = n
             if b and abs(bounds(n)[1] - b[1]) < 300:
                 break
