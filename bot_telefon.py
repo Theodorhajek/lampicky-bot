@@ -20,6 +20,7 @@ faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1 <pid> → 
 import sys
 import tempfile
 import time
+import tempo  # noqa: E402
 import traceback
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -78,7 +79,7 @@ Zákazník: {person}
 Poznámka bota: {text}
 
 1. Přečti konverzaci: `.venv/bin/python lampicky_cli.py konverzace "{person}"`.
-2. Řekni v 1–2 větách, co zákazník chce a proč to bot neví.
+2. Nahoře vypiš posledních 4–6 zpráv konverzace doslova a v pořadí, každou na řádek s „Zákazník:“ nebo „Bot:“ (jen texty, bez časů a logu), ať má Theodor kontext. Pak v 1–2 větách, co zákazník chce a proč to bot neví.
 3. Navrhni odpověď přesně ve stylu prodejce (CLAUDE.md, lekce.md). Pokud chybí informace, kterou ví jen Theodor (termín, cena, atyp), zeptej se ho a návrh zatím nepiš.
 4. Konec: návrh odpovědi a řádek `OPTIONS: Poslat | Upravit | Nechat být`.
 Po „Poslat“: `.venv/bin/python lampicky_cli.py napis "{person}" "TEXT"` (prázdný řádek = další zpráva), ověř `.venv/bin/python lampicky_cli.py fronta`, napiš že je zařazeno a skonči `TASK: close`. Po „Nechat být“: nic neposílej, `TASK: close`. Po „Upravit“: počkej na jeho text a pošli ten.
@@ -201,7 +202,7 @@ def tap_desc(desc, exact=False, timeout=8):
     if not sel.wait(timeout=timeout):
         raise RuntimeError(f"nenašel jsem tlačítko „{desc}“")
     sel.click()
-    time.sleep(2)
+    tempo.sleep(2)
 
 
 def wake():
@@ -209,7 +210,7 @@ def wake():
     locked = "isKeyguardShowing=true" in d.shell("dumpsys window").output
     if locked or not d.info.get("screenOn"):
         d.unlock()
-        time.sleep(1.5)
+        tempo.sleep(1.5)
 
 
 # tlačítka, kterými jde bezpečně zavřít vyskakovací okna Messengeru (PIN, novinky, oprávnění…)
@@ -222,7 +223,7 @@ def dismiss_popups():
         for sel in (d(description=label), d(text=label)):
             if sel.exists:
                 sel.click()
-                time.sleep(2)
+                tempo.sleep(2)
                 return True
     return False
 
@@ -272,7 +273,7 @@ def go_home():
                 continue
             zasek("Messenger – nenašel jsem seznam chatů, restartuji", f"pokus {attempt + 1}")
             d.app_stop(PKG)  # poslední možnost: Messenger restartovat
-            time.sleep(2)
+            tempo.sleep(2)
     _go_home()
 
 
@@ -280,17 +281,17 @@ def _go_home():
     wake()
     if d.app_current().get("package") != PKG:
         d.app_start(PKG, ".auth.StartScreenActivity")  # s aktivitou = bez „monkey“, který zapíná otáčení
-        time.sleep(5)
+        tempo.sleep(5)
     for _ in range(5):
         if d(descriptionStartsWith="Chaty, ").exists and not d(className="android.widget.EditText").exists:
             break
         if dismiss_popups():
             continue
         d.press("back")
-        time.sleep(1)
+        tempo.sleep(1)
         if d.app_current().get("package") != PKG:
             d.app_start(PKG, ".auth.StartScreenActivity")  # s aktivitou = bez „monkey“, který zapíná otáčení
-            time.sleep(5)
+            tempo.sleep(5)
     tap_desc("Chaty, ")
     tap_desc("Chaty, ")  # druhé klepnutí odroluje seznam nahoru
 
@@ -366,6 +367,7 @@ def is_late(stamp):
     return days >= 2
 
 
+MY_NAME = "Martin Hejduk"  # jméno profilu, ze kterého bot píše (pro rozlišení, kdo poslal fotku)
 MSG = re.compile(r"^(.+?), (.*), poklepáním zobrazíte datum", re.S)
 PHOTO = re.compile(r"(fotka|fotku|obrázek|video).*odeslal\(a\) (.+?) v ", re.I)
 
@@ -393,6 +395,11 @@ def read_messages():
             out.append({"from": side, "text": m.group(2).strip(), "images": 0, "y": y1})
             bubbles.append((x1, y1, x2, y2))
         elif cls == "ImageView" and PHOTO.search(desc):
+            # popisek fotky nese tlačítko „Přeposlání“ VEDLE fotky: u fotky od zákazníka je vpravo (x≈911), u mojí vlevo.
+            # Podle x1 < 200 by tedy fotka zákazníka vyšla jako moje a bot by na ni neodpověděl.
+            sender = PHOTO.search(desc).group(2).strip()
+            if desc.startswith("Přeposlání"):
+                side = "me" if sender.startswith(MY_NAME) else ("them" if x1 > 540 else "me")
             out.append({"from": side, "text": "", "images": 1, "y": y1})
     # zprávy bez obvyklého popisku (odkazy, sdílené příspěvky…): text v bublině, která ještě není zachycená
     for cls, text, desc, (x1, y1, x2, y2) in all_nodes:
@@ -408,7 +415,7 @@ def read_messages():
 
 def open_chat(name):
     tap_desc(f"{name}, ")
-    time.sleep(2)
+    tempo.sleep(2)
 
 
 PHOTOS = HERE / "fotky"  # skutečné fotky hotových lampiček (název souboru = motiv), bot je posílá zákazníkům
@@ -420,19 +427,19 @@ def send_photo(path):
     subprocess.run(["adb", "push", str(path), dest], check=True, capture_output=True)
     subprocess.run(["adb", "shell", "touch", dest], capture_output=True)
     subprocess.run(["adb", "shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", f"file://{dest}"], capture_output=True)
-    time.sleep(3)
+    tempo.sleep(3)
     tap_desc("Otevře se fotogalerie.", exact=True)
-    time.sleep(4)
+    tempo.sleep(4)
     first = d(descriptionStartsWith="Fotka byla pořízena")
     if not first.wait(timeout=8):
         raise RuntimeError("v galerii chatu nejsou fotky (chybí oprávnění?)")
     first.click()
-    time.sleep(2)
+    tempo.sleep(2)
     send = d(description="POSLAT") if d(description="POSLAT").exists else d(text="POSLAT")
     if not send.exists:
         raise RuntimeError("v galerii chybí tlačítko POSLAT")
     send.click()
-    time.sleep(6)
+    tempo.sleep(6)
     d.press("back")  # zavřít galerii
 
 
@@ -440,12 +447,12 @@ def send_message(text):
     box = d(className="android.widget.EditText")
     if not box.exists and d(text="Přijmout").exists:  # žádost o zprávu: pole pro psaní je až po přijetí
         d(text="Přijmout").click()
-        time.sleep(2)
+        tempo.sleep(2)
         box = d(className="android.widget.EditText")
     psani.tap(d, box)
     psani.human_type(d, text)  # po znacích s pauzami, ne celé naráz
     tap_desc("Poslat", exact=True)
-    time.sleep(2)
+    tempo.sleep(2)
     d.press("back")  # schovat klávesnici
 
 
@@ -457,7 +464,7 @@ def block_contact(name):
         if d(description="Blokovat ").exists or d(descriptionStartsWith="Odblokovat").exists:
             break
         d.swipe(540, 1800, 540, 700, 0.3)
-        time.sleep(1.5)
+        tempo.sleep(1.5)
     if d(descriptionStartsWith="Odblokovat").exists:
         return True  # už je zablokovaný
     tap_desc("Blokovat ", exact=True)
@@ -471,7 +478,7 @@ def block_contact(name):
         if not btn.exists:
             break
         btn.click()
-        time.sleep(2.5)
+        tempo.sleep(2.5)
     ok = d(descriptionStartsWith="Odblokovat").exists or d(textStartsWith="Odblokovat").exists
     if not ok:
         print("  blokování – na obrazovce je:", [n[1] or n[2] for n in nodes() if n[1] or n[2]][:20], flush=True)
@@ -485,7 +492,7 @@ def open_requests(tab):
     if d(description="Teď ne").exists:
         tap_desc("Teď ne", exact=True)
     tap_desc(tab, exact=True)
-    time.sleep(3)
+    tempo.sleep(3)
 
 
 # ---------- Claude (přes předplatné – Claude Code) ----------
@@ -678,7 +685,7 @@ def handle_thread(conv):
         return log(name, "limit odpovědí bota – předáno tobě")
 
     # chvíli počkat, ať zákazník dopíše a nepůsobí to jako automat
-    time.sleep(random.uniform(*CONFIG["replyDelaySeconds"]))
+    tempo.sleep(random.uniform(*CONFIG["replyDelaySeconds"]))
     messages = read_messages()
     if not messages or (messages[-1]["from"] != "them" and not reaction):
         return
@@ -706,7 +713,7 @@ def handle_thread(conv):
         if SEND:
             for i, m in enumerate(msgs):
                 if i:
-                    time.sleep(random.uniform(3, 8))  # jako když člověk píše další zprávu
+                    tempo.sleep(random.uniform(3, 8))  # jako když člověk píše další zprávu
                 send_message(m)
             if (answer.get("design") or "").strip():
                 make_proposal(name, answer["design"].strip(), (answer.get("design_text") or "").strip(), messages)
@@ -714,7 +721,7 @@ def handle_thread(conv):
                 send_payment_qr(name, answer["payment_amount"])
             photo = PHOTOS / Path(answer.get("photo") or "").name
             if answer.get("photo") and photo.is_file():
-                time.sleep(random.uniform(3, 6))
+                tempo.sleep(random.uniform(3, 6))
                 send_photo(photo)
                 log(name, "odeslána fotka", photo.name)
             t["botSent"] = (t["botSent"] + msgs)[-20:]
@@ -900,7 +907,7 @@ def check_comments():
                     fb.reply_to_comment(name, c["first"], reply)
                 mark()  # vyřízeno až po odeslání – při chybě to bot zkusí příště znovu
                 log(name, "komentář – odpověděl jsem", f"„{c['text']}“ → {reply}")
-                time.sleep(random.uniform(4, 10))
+                tempo.sleep(random.uniform(4, 10))
             except Exception as e:  # noqa: BLE001
                 failed = True  # upozornění neoznačit jako vyřízené – příště se komentář zkusí znovu
                 if is_connection_error(e):
@@ -931,7 +938,7 @@ def send_comment_dms(fb):
             retry.remove(job)
             continue
         try:
-            time.sleep(random.uniform(20, 60))
+            tempo.sleep(random.uniform(20, 60))
             fb.open_notification(job["key"])
             result = fb.message_commenter(name, job["first"], job["dm"])
             t["dmFromComment"] = True
@@ -1215,7 +1222,7 @@ def main():
                 offline_since, main.offline_notified = None, False
                 next_chats = next_requests = next_comments = 0  # dohnat, co mezitím přišlo
             if process_outbox():  # odpovědi a povely z dashboardu mají přednost
-                seen_notifs = messenger_notifications()
+                seen_notifs &= messenger_notifications()  # co přišlo BĚHEM kontroly, zůstává „nové“ (dřív se to tiše zahodilo)
             now = time.time()
             notifs = messenger_notifications()
             new = notifs - seen_notifs
@@ -1226,9 +1233,11 @@ def main():
                     who = k.split("|", 1)[0]
                     if who and who in state.get("threads", {}):
                         state["threads"][who]["preview"] = ""  # náhled se nemusí změnit (např. po reakci) – projít znovu
+                if any(re.search(r"(?i)chce vám poslat zprávu", k) for k in new):
+                    next_requests = 0  # nová žádost o zprávu (typicky člověk z komentářů) – nečekat hodinu na další kontrolu žádostí
             quiet = in_quiet_hours()
             if new or (now >= next_chats and not quiet):
-                time.sleep(random.uniform(3, 10))  # jako člověk, co vezme telefon do ruky
+                tempo.sleep(random.uniform(3, 10))  # jako člověk, co vezme telefon do ruky
                 n = check_list("chaty", go_home)
                 next_chats = time.time() + rnd("fullCheckEveryMinutes", [20, 40])
                 if not state["initialized"] or (time.time() >= next_requests and not quiet):
@@ -1240,14 +1249,14 @@ def main():
                     save_state()
                     print(f"Zapamatováno {n} konverzací. Odpovídat budu jen na nové zprávy.", flush=True)
                 leave_app()
-                seen_notifs = messenger_notifications()  # upozornění, která jsme právě vyřídili
+                seen_notifs &= messenger_notifications()  # co přišlo BĚHEM kontroly, zůstává „nové“ (dřív se to tiše zahodilo)
             fb_now = facebook_comment_notifications()
             fb_new = fb_now - seen_fb
             seen_fb = fb_now
             if fb_new or (time.time() >= next_comments and not quiet):
                 if fb_new:
                     print(f"[{datetime.now():%H:%M:%S}] Facebook: {'; '.join(sorted(fb_new))[:150]}", flush=True)
-                time.sleep(random.uniform(3, 10))
+                tempo.sleep(random.uniform(3, 10))
                 check_comments.interrupted = False
                 check_comments()
                 leave_app()
@@ -1256,11 +1265,11 @@ def main():
                     next_comments, next_chats = time.time() + 180, 0
                     continue
                 next_comments = time.time() + rnd("commentsEveryMinutes", [30, 60])
-                seen_notifs = messenger_notifications()
+                seen_notifs &= messenger_notifications()  # co přišlo BĚHEM kontroly, zůstává „nové“ (dřív se to tiše zahodilo)
             if not quiet and run_queue():  # příspěvky do skupin (fronta.json), max 4 za den
                 leave_app()
                 seen_fb = facebook_comment_notifications()
-                seen_notifs = messenger_notifications()
+                seen_notifs &= messenger_notifications()  # co přišlo BĚHEM kontroly, zůstává „nové“ (dřív se to tiše zahodilo)
             failures = 0
             time.sleep(CONFIG.get("notificationCheckSeconds", 20))
         except Exception as e:  # noqa: BLE001
@@ -1315,7 +1324,7 @@ def send_payment_qr(person, amount):
     try:
         import platba_qr  # noqa: PLC0415
         f, _ = platba_qr.make(amount, f"{person} lampicka")
-        time.sleep(random.uniform(3, 6))
+        tempo.sleep(random.uniform(3, 6))
         send_photo(f)
         log(person, "odeslán QR kód k platbě", f"{amount} Kč")
     except Exception as e:  # noqa: BLE001
@@ -1351,7 +1360,7 @@ def open_chat_any(person):
             open_chat(person)
             return
         d.swipe(540, 1900, 540, 900, 0.3)
-        time.sleep(1.5)
+        tempo.sleep(1.5)
     for tab in ("MOŽNÁ ZNÁTE", "SPAM"):
         open_requests(tab)
         if d(descriptionStartsWith=f"{person}, ").exists:
@@ -1379,7 +1388,7 @@ def process_outbox():
                 open_chat_any(person)
                 if job.get("text"):
                     send_message(job["text"])
-                    time.sleep(random.uniform(2, 4))
+                    tempo.sleep(random.uniform(2, 4))
                 send_photo(Path(job["file"]))
                 data.proposal_set(job["pid"], "odeslano")
                 t["botSent"] = (t["botSent"] + [job.get("text", "")])[-20:]
@@ -1389,7 +1398,7 @@ def process_outbox():
                 qr_sent = False
                 for i, part in enumerate(p for p in text.split("\n\n") if p.strip()):  # prázdný řádek = další zpráva
                     if i:
-                        time.sleep(random.uniform(2, 5))
+                        tempo.sleep(random.uniform(2, 5))
                     send_message(part.strip())
                     amount = 0 if qr_sent else payment_in_text(part)
                     if amount:  # QR hned za zprávu s částkou, ne až na konec
@@ -1420,9 +1429,9 @@ def wait_for_phone(seconds):
     while time.time() < end:
         out = subprocess.run(["adb", "devices"], capture_output=True, text=True).stdout
         if re.search(r"^\S+\s+device$", out, re.M):
-            time.sleep(3)
+            tempo.sleep(3)
             return True
-        time.sleep(3)
+        tempo.sleep(3)
     return False
 
 

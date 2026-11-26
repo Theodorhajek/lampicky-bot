@@ -4,14 +4,14 @@
   "claudePath": "/Users/TheodorHajek/.local/bin/claude",
   "browser": "chrome",
   "replyDelaySeconds": [
-    20,
-    60
+    8,
+    25
   ],
   "recentConversationsToWatch": 15,
   "maxBotRepliesInRow": 6,
   "pauseAfterManualReplyHours": 12,
   "messagesUrl": "https://www.facebook.com/messages/t/",
-  "notificationCheckSeconds": 20,
+  "notificationCheckSeconds": 12,
   "fullCheckEveryMinutes": [
     20,
     40
@@ -38,5 +38,6 @@
     "05:00"
   ],
   "telegram": true,
-  "autoObjednavky": true
+  "autoObjednavky": true,
+  "tempo": 0.5
 }

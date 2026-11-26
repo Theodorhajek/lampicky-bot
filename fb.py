@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+import tempo  # noqa: E402
 import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -71,11 +72,11 @@ def discard_composer():
             sel = d(text="Zahodit příspěvek")
         if sel.exists:
             sel.click()
-            time.sleep(3)
+            tempo.sleep(3)
         if not composer_open():
             break
         d.press("back")
-        time.sleep(2)
+        tempo.sleep(2)
     return True
 
 
@@ -85,13 +86,13 @@ def home():
     for _ in range(6):
         if re.search(r"Interstitial|QuickPromotion", d.app_current().get("activity") or ""):
             d.press("back")  # reklamní okno přes celou obrazovku („Váš Meta účet je tady“ apod.) – jen zavřít, nic nepotvrzovat
-            time.sleep(3)
+            tempo.sleep(3)
             if re.search(r"Interstitial|QuickPromotion", d.app_current().get("activity") or ""):
                 d.app_start(FB, ".LoginActivity", stop=True)  # zpět nezabírá → restart, po něm okno zmizí
-                time.sleep(10)
+                tempo.sleep(10)
             continue
         if d(descriptionMatches="^(Hledat|Search)$").wait(timeout=20):  # FB se někdy načítá pomalu; občas je anglicky
-            time.sleep(3)  # FB po startu umí obnovit rozepsaný příspěvek přes hlavní stránku
+            tempo.sleep(3)  # FB po startu umí obnovit rozepsaný příspěvek přes hlavní stránku
             if not discard_composer():
                 return
             continue
@@ -101,7 +102,7 @@ def home():
         if discard_composer():
             continue
         d.press("back")
-        time.sleep(1)
+        tempo.sleep(1)
     raise RuntimeError("Facebook: nenačetla se hlavní stránka")
 
 
@@ -121,10 +122,10 @@ def open_group_url(name, url):
     link = f"fb://group/{m.group(1)}" if m and m.group(1).isdigit() else f"fb://facewebmodal/f?href={url}"
     subprocess.run([ADB, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", link, "-p", FB], capture_output=True)
     for _ in range(8):
-        time.sleep(3)
+        tempo.sleep(3)
         descs = " | ".join((n.get("content-desc") or n.get("text") or "") for n in nodes())
         if re.sub(r"\W", "", name.lower())[:25] in re.sub(r"\W", "", descs.lower()):
-            time.sleep(3)
+            tempo.sleep(3)
             return True
     return False
 
@@ -161,28 +162,28 @@ def search_groups(query):
         try:
             d(descriptionMatches="^(Hledat|Search)$").click()
         except Exception:  # noqa: BLE001  – StaleObjectException: prvek se mezitím překreslil
-            time.sleep(2)
+            tempo.sleep(2)
             continue
         if d(className="android.widget.EditText").wait(timeout=8) and not composer_open():
             break
         discard_composer()
-        time.sleep(2)
+        tempo.sleep(2)
     else:
         raise RuntimeError("Facebook: neotevřelo se hledání")
-    time.sleep(1)
+    tempo.sleep(1)
     psani.tap(d, d(className="android.widget.EditText"))
     psani.human_type(d, query)
-    time.sleep(1)
+    tempo.sleep(1)
     d.press("enter")
-    time.sleep(6)
+    tempo.sleep(6)
     exact = d(descriptionStartsWith="Místo toho vyhledat")  # FB dotaz „opravil“ (Kamioňaci → kamionaci)
     if exact.exists:
         exact.click()
-        time.sleep(6)
+        tempo.sleep(6)
     tab = d(descriptionMatches="^(Výsledky vyhledávání pro Skupiny|Search results for Groups).*")
     if tab.wait(timeout=10):
         tab.click()
-        time.sleep(6)
+        tempo.sleep(6)
     return True
 
 
@@ -208,17 +209,17 @@ def pick_group(name, want="", screens=8):
             count = re.search(r"·\s*([\d\s,]+)", t)
             if want and count and count.group(1).strip().startswith(want):
                 d.click(540, (y1 + y2) // 2)
-                time.sleep(7)
+                tempo.sleep(7)
                 return True
             fallback = fallback or (y1 + y2) // 2
         if fallback:
             d.click(540, fallback)
-            time.sleep(7)
+            tempo.sleep(7)
             return True
         if not new_titles and seen_titles:
             break  # konec výsledků
         d.swipe(540, 1900, 540, 700, 0.3)
-        time.sleep(3)
+        tempo.sleep(3)
     return False
 
 
@@ -239,24 +240,24 @@ def open_my_group(name):
     """Nabídka → Skupiny → Vaše skupiny → najde skupinu podle přesného názvu (posouvá) a otevře ji."""
     home()
     d(descriptionMatches="^(Nabídka|Menu)$").click()
-    time.sleep(3)
+    tempo.sleep(3)
     if not d(descriptionStartsWith="Skupiny, ").exists and d(description="Zobrazit další").exists:
         d(description="Zobrazit další").click()
-        time.sleep(2)
+        tempo.sleep(2)
     d(descriptionStartsWith="Skupiny, ").click()
-    time.sleep(5)
+    tempo.sleep(5)
     d(descriptionStartsWith="Vaše skupiny, ").click()
-    time.sleep(5)
+    tempo.sleep(5)
     for _ in range(20):
         for n in nodes():
             t = (n.get("content-desc") or n.get("text") or "").replace("\xa0", " ").strip()
             if t == name and n.get("class", "").endswith(("Button", "ViewGroup")):
                 x1, y1, x2, y2 = bounds(n)
                 d.click((x1 + x2) // 2, (y1 + y2) // 2)
-                time.sleep(7)
+                tempo.sleep(7)
                 return
         d.swipe(540, 1800, 540, 900, 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
     raise RuntimeError(f"Facebook: skupinu „{name}“ jsem nenašel (ani ve Vašich skupinách)")
 
 
@@ -266,7 +267,7 @@ def push_photo(path):
     subprocess.run([ADB, "push", str(path), dest], check=True, capture_output=True)
     subprocess.run([ADB, "shell", "touch", dest], capture_output=True)
     subprocess.run([ADB, "shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", f"file://{dest}"], capture_output=True)
-    time.sleep(3)
+    tempo.sleep(3)
 
 
 def typed_ok(text):
@@ -287,60 +288,60 @@ def compose(text, photos):
     photos = [photos] if isinstance(photos, (str, Path)) else list(photos)
     for p in reversed(photos):  # poslední nahraná = v galerii první → pořadí v příspěvku jako v seznamu
         push_photo(p)
-        time.sleep(1.5)
+        tempo.sleep(1.5)
     click_desc("Napište něco…")
-    time.sleep(5)
+    tempo.sleep(5)
     box = d(className="android.widget.EditText") if d(className="android.widget.EditText").exists else d(className="android.widget.AutoCompleteTextView")
     psani.tap(d, box)
     # FB po klepnutí do ~1 s přepne do editoru „Přidat text“ – začít psát až v něm, jinak se text rozbije („gvggg…“)
     for _ in range(10):
-        time.sleep(0.6)
+        tempo.sleep(0.6)
         if d(text="Přidat text").exists or d(description="Přidat text").exists:
             break
-    time.sleep(1.2)
+    tempo.sleep(1.2)
     if not d(focused=True).exists:
         psani.tap(d, d(className="android.widget.EditText"))
-        time.sleep(1)
+        tempo.sleep(1)
     psani.human_type(d, text)
-    time.sleep(2)
+    tempo.sleep(2)
     if not typed_ok(text):  # FB občas přepne editor uprostřed psaní a z textu je nesmysl („gvggg…“)
         f = d(className="android.widget.EditText")
         psani.tap(d, f)
         f.clear_text()
-        time.sleep(1)
+        tempo.sleep(1)
         psani.human_type(d, text)
-        time.sleep(2)
+        tempo.sleep(2)
         if not typed_ok(text):
             raise RuntimeError("Facebook: text příspěvku se nenapsal správně – nezveřejňuji")
     if d(description="Galerie").exists is False:
         d.press("back")  # schovat klávesnici
-        time.sleep(2)
+        tempo.sleep(2)
     if d(description="Hotovo").exists:  # editor textu na pozadí
         click_desc("Hotovo")
-        time.sleep(3)
+        tempo.sleep(3)
     click_desc("Galerie")
-    time.sleep(5)
+    tempo.sleep(5)
     if d(description="Povolit přístup").exists:
         subprocess.run([ADB, "shell", "pm", "grant", FB, "android.permission.READ_MEDIA_IMAGES"], capture_output=True)
         click_desc("Povolit přístup")
-        time.sleep(4)
+        tempo.sleep(4)
     for i in range(1, len(photos) + 1):
         d(descriptionStartsWith=f"Fotka, položka {i},", clickable=True).click()  # FB mění třídu (CompoundButton → Button)
-        time.sleep(1.5)
+        tempo.sleep(1.5)
     click_desc("Další")
-    time.sleep(6)
+    tempo.sleep(6)
     if not d(description="Přidat", className="android.widget.Button").exists:
         raise RuntimeError("Facebook: příspěvek se nepřipravil (chybí tlačítko Přidat)")
 
 
 def publish():
     d(description="Přidat", className="android.widget.Button").click()
-    time.sleep(10)
+    tempo.sleep(10)
     for _ in range(36):  # fotky se nahrávají („Zveřejňování… Facebook nechte otevřený“) – počkat max 3 min
         if not (d(textStartsWith="Zveřejňování").exists or d(descriptionStartsWith="Zveřejňování").exists):
             break
-        time.sleep(5)
-    time.sleep(3)
+        tempo.sleep(5)
+    tempo.sleep(3)
 
 
 def screenshot(name):
@@ -388,22 +389,22 @@ def fill_questions(answers):
             if not todo:
                 break
             psani.tap(d, bounds(n))
-            time.sleep(1)
+            tempo.sleep(1)
             psani.human_type(d, todo.pop(0))
-            time.sleep(1)
+            tempo.sleep(1)
         for n in nodes():  # souhlas s pravidly
             if n.get("checkable") == "true" and n.get("checked") == "false":
                 x1, y1, x2, y2 = bounds(n)
                 d.click((x1 + x2) // 2, (y1 + y2) // 2)
-                time.sleep(1)
+                tempo.sleep(1)
         for label in ("Odeslat", "Odeslat žádost", "Hotovo"):
             sel = d(description=label) if d(description=label).exists else d(text=label)
             if sel.exists and not todo:
                 sel.click()
-                time.sleep(6)
+                tempo.sleep(6)
                 return True
         d.swipe(540, 1800, 540, 800, 0.3)  # další otázky / tlačítko Odeslat bývají níž
-        time.sleep(2)
+        tempo.sleep(2)
     return False
 
 
@@ -413,7 +414,7 @@ def join_open_group(answerer=None):
     for sel in (d(description="Přidat se", className="android.widget.Button"), d(descriptionStartsWith="Přidat se do skupiny"), d(text="Přidat se")):
         if sel.exists:
             sel.click()
-            time.sleep(6)
+            tempo.sleep(6)
             break
     q = questions_screen()
     if q:
@@ -424,7 +425,7 @@ def join_open_group(answerer=None):
                 d(description="Zavřít").click()
             else:
                 d.press("back")
-            time.sleep(3)
+            tempo.sleep(3)
             global LAST_SKIP_REASON
             LAST_SKIP_REASON = res.get("reason") or "formulář se nepodařilo odeslat"
             return "skipped-questions"
@@ -479,7 +480,10 @@ COMMENT_RE = re.compile(r"^(?P<name>.+?) (?:s \d+ dalšími |a \d+ dalších )?(
                         r" (?:na )?(?P<what>váš|vaši|vás|vaše)\b.*?(?:ve skupině (?P<group>.+?))?(?:[.:]|$)")
 # „Jaro Krutilek vás zmiňuje v komentáři ve skupině F1 CZ/SK Club: "Martin Hejduk jsem v Norsku…".. 1 d.“
 MENTION_RE = re.compile(r"^(?P<name>.+?) vás (?:zmiňuje|zmínil\w*|označil\w*(?:\(a\))?) v komentáři(?: ve skupině (?P<group>.+?))?(?::|\.|$)")
-TIME_TAIL = re.compile(r"\.*\s*\d+\s*(?:s|m|h|d|t|r)\.?(?:\s*(?:Nep|P)řečteno)?\s*$|\s*(?:Nep|P)řečteno\s*$")
+# čas na konci upozornění: „5 d.“, „1 h“, ale i „35 minut.“, „4 minuty.“, „17 hod..“ (FB střídá zápis) – do klíče nepatří,
+# jinak se klíč každou minutu změní a upozornění už nejde podruhé najít
+TIME_TAIL = re.compile(r"\.*\s*(?:\d+\s*(?:sekund\w*|minut\w*|min|hodin\w*|hod|dn\w*|den|týdn\w*|týden|měsíc\w*|rok\w*|let|s|m|h|d|t|r)"
+                       r"|právě teď|včera)\.{0,2}(?:\s*(?:Nep|P)řečteno)?\s*$|\s*(?:Nep|P)řečteno\s*$")
 
 
 def open_notifications():
@@ -489,10 +493,10 @@ def open_notifications():
         tab = d(descriptionStartsWith="Upozornění, karta")
         if not tab.wait(timeout=10):
             d.press("back")  # něco zakrývá spodní lištu
-            time.sleep(2)
+            tempo.sleep(2)
             continue
         tab.click()
-        time.sleep(5)
+        tempo.sleep(5)
         if d(description="Spravovat nastavení upozornění").exists or d(descriptionStartsWith="Spravovat nastavení").exists:
             return
     raise RuntimeError("Facebook: karta Upozornění se neotevřela")
@@ -524,7 +528,7 @@ def all_comment_notifications(screens=12):
                 out.append(i)
         _more_notifications()
         d.swipe(540, 1800, 540, 800, 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
     return out
 
 
@@ -533,14 +537,21 @@ def _more_notifications():
     sel = d(description="Předchozí upozornění")
     if sel.exists:
         sel.click()
-        time.sleep(4)
+        tempo.sleep(4)
 
 
 def open_notification(key):
     """Otevře kartu Upozornění, najde upozornění podle klíče (posouvá dolů) a otevře ho."""
     open_notifications()
     for _ in range(26):
-        match = next((i for i in comment_notifications() if i["key"] == key), None)
+        found = comment_notifications()
+        match = next((i for i in found if i["key"] == key), None)
+        if not match:  # text se mezitím změnil („s 3 dalšími“ → „s 4 dalšími“): stejná skupina a druh = stejný příspěvek
+            m0 = COMMENT_RE.search(key) or MENTION_RE.search(key)
+            grp = ((m0["group"] if m0 else "") or "").strip(" .")
+            is_reply = bool(m0) and (m0.re is MENTION_RE or m0["kind"].startswith("odpověd"))
+            if grp:
+                match = next((i for i in found if i["group"] == grp and i["reply"] == is_reply), None)
         if match and 250 < match["bounds"][1] and match["bounds"][3] < 2050:  # celé vidět (ne pod spodní lištou)
             x1, y1, x2, y2 = match["bounds"]
             d.click((x1 + x2) // 2, (y1 + y2) // 2)
@@ -549,15 +560,15 @@ def open_notification(key):
                     or d(text="Odpovědi").exists or d(textStartsWith="Odpovědi na komentář").exists
                     or d(descriptionStartsWith="Odpovědi na komentář").exists):
                 raise RuntimeError("po klepnutí na upozornění se neotevřel příspěvek")
-            time.sleep(3)
+            tempo.sleep(3)
             return
         if match:
             d.swipe(540, 1500, 540, 1000, 0.3)  # upozornění je u kraje – kousek posunout
-            time.sleep(2)
+            tempo.sleep(2)
             continue
         _more_notifications()
         d.swipe(540, 1800, 540, 800, 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
     raise RuntimeError("upozornění na komentář jsem nenašel")
 
 
@@ -588,12 +599,12 @@ def read_post_comments():
     answered = pod komentářem už je moje odpověď (např. jsi odpověděl ručně)."""
     found, collapsed = [], set()
     d(descriptionStartsWith="Profilový obrázek").wait(timeout=15)  # komentáře se načítají se zpožděním
-    time.sleep(2)
+    tempo.sleep(2)
     sort_newest()
     idle = 0
     for _ in range(14):
         _expand_comments()  # rozbalit na téhle obrazovce a hned ji přečíst (po posunu FB odpovědi zase sbalí)
-        time.sleep(1)
+        tempo.sleep(1)
         all_nodes = nodes()
         for n in all_nodes:  # „Zobrazit 1 odpověď Filip Baldrych…“, co se nerozbalilo → komentář má odpověď
             m = re.match(r"Zobrazit .*?odpově\w* (.+?)…?$", n.get("content-desc") or "")
@@ -629,7 +640,7 @@ def read_post_comments():
         if idle >= 2:
             break
         d.swipe(540, 1700, 540, 900, 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
     # vlákna: komentář + odsazené odpovědi pod ním (při řazení „Nejnovější“ jsou i odpovědi podle data, ne popořadě)
     for i, c in enumerate(found):
         c.pop("y", None)
@@ -659,16 +670,16 @@ def sort_newest():
             if "Nejnovější" in (f.info.get("contentDescription") or ""):
                 return True
             f.click()
-            time.sleep(2)
+            tempo.sleep(2)
             opt = d(descriptionStartsWith="Nejnovější, ")
             if opt.wait(timeout=5):
                 opt.click()
-                time.sleep(4)
+                tempo.sleep(4)
                 return True
             d.press("back")
             return False
         d.swipe(540, 1500, 540, 900, 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
     return False  # příspěvek bez filtru (třeba vlákno „Odpovědi“) – nevadí
 
 
@@ -695,7 +706,7 @@ def _expand_comments():
             if not sel.exists:
                 break
             sel.click()
-            time.sleep(3)
+            tempo.sleep(3)
 
 
 def _match_comment(name, text):
@@ -725,7 +736,7 @@ def _find_comment(name, text):
                 d.swipe(540, 800, 540, 1600, 0.3)
             else:
                 d.swipe(540, 1600, 540, 800, 0.3)
-            time.sleep(1.5)
+            tempo.sleep(1.5)
             if d.dump_hierarchy() == before:
                 break  # začátek / konec stránky
     return None
@@ -741,7 +752,7 @@ def reply_to_comment(name, text, reply):
     b = _find_comment(name, text)
     if b and b[3] > 1700:  # komentář u spodního okraje – posunout, ať je vidět i tlačítko Odpovědět
         d.swipe(540, 1500, 540, 900, 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
         b = _find_comment(name, text)
     if not b:
         raise RuntimeError(f"komentář od {name} jsem na příspěvku nenašel")
@@ -756,22 +767,22 @@ def reply_to_comment(name, text, reply):
         raise RuntimeError(f"u komentáře od {name} chybí tlačítko Odpovědět")
     x1, y1, x2, y2 = bounds(best)
     d.click((x1 + x2) // 2, (y1 + y2) // 2)
-    time.sleep(3)
+    tempo.sleep(3)
     _type_into_box(reply)
     in_thread = d(textStartsWith="Odpovědi na komentář").exists or d(descriptionStartsWith="Odpovědi na komentář").exists
     if not in_thread and not d(descriptionStartsWith="Odpovídáte uživateli").exists and not d(textStartsWith="Odpovídáte uživateli").exists:
         raise RuntimeError("Facebook: nejsem v režimu odpovědi na komentář – neodesílám")
     click_desc("Odeslat")
-    time.sleep(4)
+    tempo.sleep(4)
     if keyboard_shown():
         d.press("back")  # schovat klávesnici, ať jde stránkou dál posouvat
-        time.sleep(1)
+        tempo.sleep(1)
 
 
 def _type_into_box(text):
     """Vloží text do pole pro komentář. Klávesnice ho umí celé zakrýt (uiautomator pak vidí jen ji) – proto ji
     nejdřív schová (pole zůstane aktivní) a pak teprve hledá pole."""
-    time.sleep(2)  # klávesnice vyskakuje se zpožděním
+    tempo.sleep(2)  # klávesnice vyskakuje se zpožděním
     # po klepnutí na „Odpovědět“ je pole aktivní (kurzor za jménem) – stačí psát; vkládá se na pozici kurzoru,
     # takže zmínka „Jméno Příjmení“ na začátku zůstane jako u člověka
     try:
@@ -780,7 +791,7 @@ def _type_into_box(text):
     except Exception:  # noqa: BLE001  – pole zakryla klávesnice; schovat ji a zkusit znovu
         if keyboard_shown():
             d.press("back")
-            time.sleep(1.5)
+            tempo.sleep(1.5)
     for _ in range(2):
         box = d(className="android.widget.AutoCompleteTextView")
         if not box.exists:
@@ -789,11 +800,11 @@ def _type_into_box(text):
             b = box.info["bounds"]  # klepnout vpravo v poli → kurzor za zmínkou „Jméno“, ne před ní
             d.click(b["left"] + int((b["right"] - b["left"]) * random.uniform(0.75, 0.92)),
                     b["top"] + int((b["bottom"] - b["top"]) * random.uniform(0.35, 0.65)))
-            time.sleep(1)
+            tempo.sleep(1)
             psani.human_type(d, text)
             return
         d.press("back")  # schovat klávesnici
-        time.sleep(2)
+        tempo.sleep(2)
     raise RuntimeError("Facebook: nenašel jsem pole pro odpověď")
 
 
@@ -810,7 +821,7 @@ def message_commenter(name, text, message):
         raise RuntimeError(f"jméno {name} u komentáře nejde otevřít")
     x1, y1, x2, y2 = bounds(target)
     d.click((x1 + x2) // 2, (y1 + y2) // 2)
-    time.sleep(7)
+    tempo.sleep(7)
     for _ in range(4):  # profil se někdy otevře na šířku a tlačítko je až níž
         label = next((lb for lb in ("Zpráva", "Poslat zprávu", "Napsat zprávu") if d(description=lb).exists or d(text=lb).exists), None)
         if label:
@@ -818,10 +829,10 @@ def message_commenter(name, text, message):
             break
         w, h = d.window_size()
         d.swipe(w // 2, int(h * 0.8), w // 2, int(h * 0.35), 0.3)
-        time.sleep(2)
+        tempo.sleep(2)
     else:
         raise RuntimeError(f"na profilu {name} není tlačítko Zpráva")
-    time.sleep(8)
+    tempo.sleep(8)
     # chat se otevře buď v Messengeru, nebo přímo ve Facebooku (okno chatu nad stránkou)
     texts = [(n.get("content-desc") or n.get("text") or "") for n in ET.fromstring(d.dump_hierarchy()).iter("node")]
     if any("poklepáním zobrazíte datum" in t or t.startswith(("Odesláno", "Zobrazeno")) for t in texts):
@@ -831,7 +842,7 @@ def message_commenter(name, text, message):
         sel = d(description=label) if d(description=label).exists else d(text=label)
         if sel.exists:
             sel.click()
-            time.sleep(6)
+            tempo.sleep(6)
     box = d(className="android.widget.EditText")
     if not box.wait(timeout=10):
         raise RuntimeError("v chatu chybí pole pro zprávu")
@@ -841,7 +852,7 @@ def message_commenter(name, text, message):
     if not send.exists:
         raise RuntimeError("v chatu chybí tlačítko Poslat")
     send.click()
-    time.sleep(3)
+    tempo.sleep(3)
     d.press("back")
     return "sent"
 
