@@ -690,6 +690,8 @@ def handle_thread(conv):
         notify("Lampičky – potřebuju tě (nová zpráva v předané konverzaci)", f"{name}: {last['text'] or '(příloha)'}")
         return log(name, "nová zpráva, čeká na tebe (předáno)", last["text"])
     if time.time() * 1000 < t["pausedUntil"]:
+        t["handled"] = fingerprint  # jednou za novou zprávu – a dát vědět, ať to neleží
+        notify("Lampičky – potřebuju tě (nová zpráva, kde píšeš ručně)", f"{name}: {last['text'] or '(příloha)'}")
         return log(name, "nová zpráva, bot pozastaven (píšeš ručně)", last["text"])
     if t["botReplies"] >= CONFIG["maxBotRepliesInRow"]:
         t["handedOff"] = True
@@ -1424,7 +1426,10 @@ def process_outbox():
                     if amount:  # QR hned za zprávu s částkou, ne až na konec
                         send_payment_qr(person, amount)
                         qr_sent = True
-                t["pausedUntil"] = (time.time() + CONFIG["pauseAfterManualReplyHours"] * 3600) * 1000  # píšeš ty – bot mlčí
+                # odpověď z Telegramu/CLI bota neumlčí (dřív 12 h pauza → další dotazy zákazníka ležely bez odpovědi);
+                # bot ji bere jako svou, na další zprávu zákazníka odpoví s celým kontextem, a když neví, předá ti ji
+                parts = [x.strip() for x in text.split("\n\n") if x.strip()]
+                t.update(botSent=(t["botSent"] + parts)[-20:], pausedUntil=0, handedOff=False, botReplies=0)
                 data.save_conversation(person, read_messages(), t["botSent"])
                 log(person, "odesláno z dashboardu", text)
             data.outbox_done(oid)

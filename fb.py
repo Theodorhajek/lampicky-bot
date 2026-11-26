@@ -877,7 +877,14 @@ def message_commenter(name, text, message):
     if not box.wait(timeout=10):
         raise RuntimeError("v chatu chybí pole pro zprávu")
     psani.tap(d, box)
-    psani.human_type(d, message)
+    try:
+        psani.human_type(d, message)
+    except RuntimeError:  # okno chatu ve FB občas po přepnutí klávesnice ztratí fokus – klepnout znovu a zkusit jednou
+        tempo.sleep(1.5)
+        box = d(className="android.widget.EditText")
+        psani.tap(d, box)
+        tempo.sleep(1)
+        psani.human_type(d, message)
     send = d(descriptionStartsWith="Poslat")
     if not send.exists:
         raise RuntimeError("v chatu chybí tlačítko Poslat")

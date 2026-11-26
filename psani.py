@@ -150,11 +150,12 @@ def human_type(d, text):
             prev = chunk[-1]
     tempo.sleep(random.uniform(0.3, 0.8))  # chvilka, než „klepne“ na Odeslat
     if not _same(_text(d), text) and not _put(d, text):  # celé naráz
+        print(f"  psaní nesedí – pole: {_text(d)[:80]!r}, třídy: {[c for c in EDIT_CLASSES if d(className=c).exists]}", flush=True)
         try:
             _field(d, 2).clear_text()
         except Exception:  # noqa: BLE001
             pass
-        raise RuntimeError("psaní: text se nenapsal správně – nic neodesílám")
+        raise RuntimeError(f"psaní: text se nenapsal správně – nic neodesílám (v poli bylo: {_text(d)[:80]!r})")
 
 
 def _same(a, b):
